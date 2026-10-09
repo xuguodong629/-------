@@ -1,0 +1,424 @@
+# -*- coding: utf-8 -*-
+"""
+_check_spec.py —— 只读检查：知识库笔记是否符合 `Templates（模板）/格式规范.md`。
+
+不出网、不改文件。逐条对应格式规范：
+
+  §0-1  模板开头必须有 <%* %> 收集块（--templates 时检查）
+  §0-2  模板提示块不得漏进笔记（正文不出现 <% %>），也没有泄露的 dict 字面量
+  §1-1  frontmatter 一律英文键名
+  §1-2  frontmatter 内禁止 [[ ]]（只能写在正文）
+  §1-3  有且仅有一个 H1
+  §1-4  章节（## / ###）一律 emoji 前缀，不用 一、二、三 编号
+  §1-5  标题前后各有一个空行
+  §1-7  空位写 <!-- TODO: 待补 -->，不留空 bullet / - [[]]
+  §1-10 ## 📌 事件概览 必须是叙述性文字
+  §1-11 文件末尾固定 `---` + `**关联**：…`
+
+用法：
+    py _check_spec.py                        # 检查当前知识库（①页选定的那个），逐条列问题
+    py _check_spec.py <知识库根>              # 检查指定知识库
+    py _check_spec.py <知识库根> --dir "02 人物图谱"
+    py _check_spec.py --templates            # 只检查模板目录里的模板
+    py _check_spec.py --report               # 汇总报告 → _规范检查报告.txt（不改文件）
+退出码：0 = 全部通过；1 = 有问题（或参数不对）。
+"""
+from __future__ import annotations
+
+import re
+import sys
+from datetime import datetime
+from pathlib import Path
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
+import core
+
+SPEC_FILE = "格式规范.md"
+TPL_DIR_NAME = "Templates（模板）"
+HOME_STEM = "首页"
+SKIP_DIR_PARTS = ("templates", "模板", "assets", "attachments", "附件", "资产", "图片")
+SKIP_STEMS = {"索引"}
+SKIPPED_INDEX: list = []          # 被跳过的索引文件（索引.md / _索引.md —— 它们不是词条笔记）
+EMOJI_MIN = 0x2190                       # 这个码点及以上（箭头/符号/emoji）算章节前缀
+HEAD_RE = re.compile(r"^(#{1,6})\s+(.*)$")
+KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*$")
+DICT_LEAK_RE = re.compile(r"\{'#{2,3} ")
+EMBED_RE = re.compile(r"!\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")     # 图片/附件嵌入
+DISPUTE_MARK = "⚖️ 争议说明"                                    # §1-12 争议内容统一写法
+DISPUTE_HINTS = ("存在争议", "说法不一", "尚有争议", "口径不一", "统计不一")
+
+
+def _is_symbol(ch: str) -> bool:
+    return bool(ch) and ord(ch) >= EMOJI_MIN
+
+
+def _blankish(line: str) -> bool:
+    """空行，或模板里紧邻 H1 的 Templater 收尾行（_%>）。"""
+    return (not line.strip()) or line.strip() in ("_%>", "%>")
+
+
+def check_text(text: str, *, is_template: bool = False,
+               require_prompt_block: bool = False, known_files=None) -> list:
+    """返回问题清单（空列表 = 通过）。"""
+    issues: list = []
+    starts_with_fm = text.lstrip().startswith("---")
+    fields, body = core.split_frontmatter(text)
+
+    if starts_with_fm and fields is None:
+        issues.append("frontmatter 不完整（缺少收尾的 ---）")
+    if fields is None:
+        fields, body = {}, text
+
+    # §1-1 / §1-2
+    fm_raw = ""
+    if starts_with_fm:
+        end = text.find("\n---", 3)
+        fm_raw = text[3:end] if end > 0 else ""
+    for key in fields:
+        if not KEY_RE.match(str(key)):
+            issues.append(f"frontmatter 非英文键：{key}（§1-1）")
+    if "[[" in fm_raw or "]]" in fm_raw:
+        issues.append("frontmatter 里出现 [[ ]]（§1-2 只允许写在正文）")
+
+    lines = body.splitlines()
+
+    # §1-3
+    h1 = [i for i, ln in enumerate(lines)
+          if HEAD_RE.match(ln) and HEAD_RE.match(ln).group(1) == "#"]
+    if not h1:
+        issues.append("缺少 H1 标题（§1-3）")
+    elif len(h1) > 1:
+        issues.append(f"有 {len(h1)} 个 H1 标题（§1-3 只允许一个）")
+
+    # §1-4 / §1-5（含「标题被并进上一行」：行中出现 ## / ###）
+    for i, ln in enumerate(lines):
+        m = HEAD_RE.match(ln)
+        if not m:
+            if re.search(r"\S\s+#{2,3}\s+\S", ln):
+                issues.append(f"标题被并进上一行（§1-5）：{ln.strip()[:60]}")
+            continue
+        level, title = m.group(1), m.group(2).strip()
+        if level in ("##", "###") and not _is_symbol(title[:1]):
+            issues.append(f"章节标题没有 emoji 前缀（§1-4）：{ln.strip()}")
+        if i > 0 and not _blankish(lines[i - 1]):
+            issues.append(f"标题前缺空行（§1-5）：{ln.strip()}")
+        if i + 1 < len(lines) and not _blankish(lines[i + 1]):
+            issues.append(f"标题后缺空行（§1-5）：{ln.strip()}")
+
+    # §1-7
+    for i, ln in enumerate(lines):
+        if ln.strip() in ("-", "*", "- [[]]", "* [[]]"):
+            issues.append(f"第 {i + 1} 行是空占位，应写 <!-- TODO: 待补 -->（§1-7）")
+
+    # §1-10
+    for i, ln in enumerate(lines):
+        m = HEAD_RE.match(ln)
+        if m and "事件概览" in m.group(2):
+            block = []
+            for nxt in lines[i + 1:]:
+                if HEAD_RE.match(nxt):
+                    break
+                block.append(nxt.strip())
+            narrative = [b for b in block if b and not b.startswith(("-", "*", "<!--"))]
+            pending = any("TODO" in b for b in block)          # 还没填的骨架不算违规
+            if not narrative and not pending:
+                issues.append("## 📌 事件概览 只有占位/元数据，需要叙述性文字（§1-10）")
+            break
+
+    # §1-11
+    foot = next((i for i in range(len(lines) - 1, -1, -1)
+                 if lines[i].strip().startswith(("**关联**", "**关联模块**"))), None)
+    if foot is None:
+        issues.append("结尾缺少 `---` + **关联**：… 页脚（§1-11）")
+    else:
+        if [ln for ln in lines[foot + 1:] if ln.strip()]:
+            issues.append("**关联** 页脚后面还有内容（§1-11 要求它是文件最后的非空行）")
+        if foot - 1 < 0 or lines[foot - 1].strip() != "---":
+            issues.append("页脚格式：`---` 要紧贴 **关联** 上一行、中间不留空行（§1-11）")
+
+    # §1-12 争议内容：`> ⚖️ 争议说明：…｜来源：…`（所有词条适用）
+    if not is_template:
+        for i, ln in enumerate(lines):
+            if DISPUTE_MARK in ln:
+                # 同一个引用块（连续的 > 行）内任意一行注明来源即合规：作者常把来源写在 callout 内后续行
+                lo = i
+                while lo - 1 >= 0 and lines[lo - 1].lstrip().startswith(">"):
+                    lo -= 1
+                hi = i
+                while hi + 1 < len(lines) and lines[hi + 1].lstrip().startswith(">"):
+                    hi += 1
+                if not any("来源" in x for x in lines[lo:hi + 1]):
+                    issues.append(f"第 {i + 1} 行争议说明缺来源"
+                                  f"（§1-12：同一引用块内要写 `｜来源：<出处>`）")
+            elif (DISPUTE_MARK not in ln and any(k in ln for k in DISPUTE_HINTS)
+                  and not _inside_dispute_block(lines, i)):
+                if not any(DISPUTE_MARK in x for x in lines[i + 1:i + 3]):
+                    issues.append(f"建议：第 {i + 1} 行提到「"
+                                  f"{next(k for k in DISPUTE_HINTS if k in ln)}」"
+                                  "但下一行没有 `> ⚖️ 争议说明：…`（§1-12）")
+
+    # §0-2（模板本身就该有 <%* %> / <% %>，只检查笔记）
+    if not is_template and ("<%" in text or "%>" in text):
+        issues.append("残留 Templater 标记 <% %>（§0-2：模板提示块漏进了笔记）")
+    if DICT_LEAK_RE.search(text):
+        issues.append("疑似泄露的 Python dict 字面量（格式规范 §3）")
+
+    # §0-1
+    if require_prompt_block and not text.lstrip().startswith("<%*"):
+        issues.append("模板开头缺少 <%* %> 收集块（§0-1）")
+
+    # §4 配图：![[...]] 引用的文件必须真的存在
+    if known_files is not None:
+        for m in EMBED_RE.finditer(text):
+            target = m.group(1).strip()
+            if target and target not in known_files and not target.startswith(("http://", "https://")):
+                issues.append(f"配图/附件找不到文件：![[{target}]]（§4 图片放 Assets（图片地图）/）")
+
+    return issues
+
+
+def check_file(path: Path, *, is_template: bool = False, known_files=None) -> list:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception as exc:
+        return [f"读取失败：{type(exc).__name__}: {exc}"]
+    need_block = is_template and path.stem not in (HOME_STEM, "格式规范")
+    return check_text(text, is_template=is_template, require_prompt_block=need_block,
+                      known_files=None if is_template else known_files)
+
+
+def vault_files(root: Path) -> set:
+    """知识库里所有文件名（Obsidian 按文件名解析 ![[…]]）。"""
+    names = set()
+    for p in root.rglob("*"):
+        try:
+            if p.is_file():
+                names.add(p.name)
+        except OSError:
+            continue
+    return names
+
+
+def iter_targets(root: Path, only_dir: str = "", templates: bool = False):
+    """产出 (路径, 是否模板)。"""
+    if templates:
+        tpl_dir = root if root.name == TPL_DIR_NAME else (root / TPL_DIR_NAME)
+        if not tpl_dir.is_dir():
+            return
+        for p in sorted(tpl_dir.glob("*.md")):
+            if p.name == SPEC_FILE:
+                continue
+            yield p, True
+        # 模板库里的**子目录**也是模板集（如 古代社会模板/、近现代/），一并检查
+        for sub in sorted(x for x in tpl_dir.iterdir() if x.is_dir()):
+            for p in sorted(sub.glob("*.md")):
+                if p.name == SPEC_FILE:
+                    continue
+                yield p, True
+        return
+    for p in sorted(root.glob("*.md")):            # 库根目录下的笔记（如 索引.md、逐年表）也要查
+        if p.stem in SKIP_STEMS or p.stem.endswith("索引"):
+            SKIPPED_INDEX.append(p)
+            continue
+        yield p, False
+    dirs = [root / only_dir] if only_dir else sorted(p for p in root.iterdir() if p.is_dir())
+    for d in dirs:
+        if not d.is_dir() or any(k in d.name.lower() for k in SKIP_DIR_PARTS):
+            continue
+        for p in sorted(d.rglob("*.md")):          # 递归：分层库（如 01人物/五胡十六国/x.md）也要查到
+            if any(k in q.name.lower() for q in p.parents if q != root for k in SKIP_DIR_PARTS):
+                continue
+            if p.stem in SKIP_STEMS or p.stem.endswith("索引"):
+                SKIPPED_INDEX.append(p)
+                continue
+            yield p, False
+
+
+ISSUE_KINDS = (
+    ("frontmatter 非英文键", "frontmatter 非英文键"),
+    ("[[ ]]", "frontmatter 里有 [[ ]]"),
+    ("没有 emoji 前缀", "章节缺 emoji 前缀"),
+    ("标题前缺空行", "标题前缺空行"),
+    ("标题后缺空行", "标题后缺空行"),
+    ("空占位", "空占位没写 TODO"),
+    ("结尾缺少", "缺结尾关联页脚"),
+    ("H1", "H1 数量问题"),
+    ("事件概览", "事件概览缺叙述文字"),
+    ("Templater", "残留模板标记 <% %>"),
+    ("dict 字面量", "泄露的 dict 字面量"),
+    ("读取失败", "读取失败"),
+    ("缺少 <%* %>", "模板缺 <%* %> 收集块"),
+)
+
+
+def issue_kind(issue: str) -> str:
+    for needle, name in ISSUE_KINDS:
+        if needle in issue:
+            return name
+    return "其他"
+
+
+def collect(root: Path, only_dir: str = "", templates: bool = False) -> list:
+    known = vault_files(root) if not templates else None
+    rows = []
+    for path, is_tpl in iter_targets(root, only_dir, templates):
+        rows.append((path, check_file(path, is_template=is_tpl,
+                                      known_files=None if is_tpl else known)))
+    return rows
+
+
+def _hard(iss: list) -> list:
+    """硬问题（`建议：` 开头的是可选建议，不影响通过）。"""
+    return [x for x in iss if not x.startswith("建议：")]
+
+
+def write_report(root: Path, rows: list, out_path: Path) -> str:
+    """汇总报告：总体 + 按目录 + 按问题类型 + 待处理文件清单。"""
+    total = len(rows)
+    bad_rows = [(p, _hard(iss)) for p, iss in rows if _hard(iss)]
+    soft_rows = [(p, [x for x in iss if x.startswith("建议：")]) for p, iss in rows
+                 if any(x.startswith("建议：") for x in iss)]
+    issue_total = sum(len(iss) for _p, iss in bad_rows)
+    soft_total = sum(len(iss) for _p, iss in soft_rows)
+
+    by_dir: dict = {}
+    for path, iss in bad_rows:
+        d = by_dir.setdefault(path.parent.name, {"files": 0, "issues": 0, "total": 0})
+        d["files"] += 1
+        d["issues"] += len(iss)
+    for path, _iss in rows:
+        by_dir.setdefault(path.parent.name, {"files": 0, "issues": 0, "total": 0})["total"] += 1
+
+    by_kind: dict = {}
+    for _path, iss in bad_rows:
+        for it in iss:
+            k = issue_kind(it)
+            by_kind[k] = by_kind.get(k, 0) + 1
+
+    lines = [
+        "历史知识库 · 格式规范检查报告（只读，未改动任何文件）",
+        "=" * 72,
+        f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"知识库：{root}",
+        f"格式标准：{root / 'Templates（模板）' / '格式规范.md'}",
+        "",
+        f"总体：检查 {total} 个文件 → 通过 {total - len(bad_rows)}，有问题 {len(bad_rows)}（共 {issue_total} 处）"
+        + (f"；另有 {soft_total} 条建议（可选，不计入问题）" if soft_total else "")
+        + (f"；已跳过 {len(SKIPPED_INDEX)} 篇索引文件（不算词条笔记）" if SKIPPED_INDEX else ""),
+        "",
+        "一、按目录",
+        "-" * 72,
+        f"{'目录':<28}{'文件':>6}{'有问题':>8}{'问题数':>8}",
+    ]
+    for name, d in sorted(by_dir.items(), key=lambda kv: -kv[1]["issues"]):
+        lines.append(f"{name:<28}{d['total']:>6}{d['files']:>8}{d['issues']:>8}")
+
+    lines += ["", "二、按问题类型", "-" * 72]
+    for kind, n in sorted(by_kind.items(), key=lambda kv: -kv[1]):
+        lines.append(f"{kind:<28}{n:>8} 处")
+
+    lines += ["", "三、待处理文件（按问题数倒序，最多 200 个）", "-" * 72]
+    for path, iss in sorted(bad_rows, key=lambda r: -len(r[1]))[:200]:
+        kinds: dict = {}
+        for it in iss:
+            k = issue_kind(it)
+            kinds[k] = kinds.get(k, 0) + 1
+        detail = "、".join(f"{k}×{v}" for k, v in sorted(kinds.items(), key=lambda kv: -kv[1]))
+        lines.append(f"[{path.parent.name}] {path.name}  {len(iss)} 处")
+        lines.append(f"      {detail}")
+    if len(bad_rows) > 200:
+        lines.append(f"（其余 {len(bad_rows) - 200} 个文件略）")
+
+    if soft_rows:
+        lines += ["", "四、建议（可选，不影响通过）", "-" * 72]
+        for path, iss in sorted(soft_rows, key=lambda r: -len(r[1]))[:60]:
+            lines.append(f"[{path.parent.name}] {path.name}")
+            for it in iss[:3]:
+                lines.append(f"      {it}")
+
+    lines += [
+        "",
+        "处理建议：",
+        "  · 老笔记（编号型章节 + 中文 frontmatter 键）：先用 migrate_format.py 迁移，再跑一次本检查；",
+        "  · 缺结尾关联页脚 / 标题缺空行：程序写入时会按当前知识库的映射生成；",
+        "  · 争议内容：所有词条都按 §1-12 写 `> ⚖️ 争议说明：…｜来源：…`（AI 生成时会自动带上）；",
+        "  · 只想看某个目录：py _check_spec.py --dir \"02 人物图谱\"",
+    ]
+    text = "\n".join(lines) + "\n"
+    out_path.write_text(text, encoding="utf-8")
+    return text
+
+
+
+def _inside_dispute_block(lines: list, i: int) -> bool:
+    """第 i 行是否位于某个 `> ⚖️ 争议说明` 引用块内部（向上回溯连续的 `>` 行）。
+    块内出现「说法不一」这类词是正常的，不该再提示“缺争议说明”。"""
+    j = i
+    while j >= 0 and lines[j].lstrip().startswith(">"):
+        if DISPUTE_MARK in lines[j]:
+            return True
+        j -= 1
+    return False
+
+
+def main() -> int:
+    args = list(sys.argv[1:])
+    templates = "--templates" in args
+    report = "--report" in args
+    args = [a for a in args if a not in ("--templates", "--report")]
+    only_dir = ""
+    if "--dir" in args:
+        i = args.index("--dir")
+        if i + 1 < len(args):
+            only_dir = args[i + 1]
+            del args[i:i + 2]
+    out_path = Path(__file__).resolve().parent / "_规范检查报告.txt"
+    if "--out" in args:
+        i = args.index("--out")
+        if i + 1 < len(args):
+            out_path = Path(args[i + 1])
+            del args[i:i + 2]
+    root = Path(args[0]) if args else Path(core.DEFAULT_KB_HINT)
+    if not root.is_dir():
+        print("知识库路径不存在：", root)
+        return 1
+
+    if report:
+        rows = collect(root, only_dir, templates)
+        text = write_report(root, rows, out_path)
+        head = text.split("二、按问题类型")[0]
+        print(head)
+        print(f"完整报告（含待处理文件清单）已写入：{out_path}")
+        bad = sum(1 for _p, iss in rows if _hard(iss))
+        return 1 if bad else 0
+
+    print("=" * 72)
+    print("格式规范检查：" + str(root) + ("（只看模板目录）" if templates else ""))
+    print("=" * 72)
+
+    total = bad = issue_count = 0
+    known = vault_files(root) if not templates else None
+    for path, is_tpl in iter_targets(root, only_dir, templates):
+        total += 1
+        issues = check_file(path, is_template=is_tpl, known_files=None if is_tpl else known)
+        if issues:
+            bad += 1
+            issue_count += len(issues)
+            print(f"[!] {path.parent.name}/{path.name}")
+            for item in issues:
+                print("      - " + item)
+
+    print("-" * 72)
+    print(f"检查 {total} 个文件：通过 {total - bad}，有问题 {bad}（共 {issue_count} 处）")
+    if bad:
+        print("提示：老笔记可用 migrate_format.py 迁移；缺页脚这类问题按上面提示改模板或笔记即可。")
+        print("      想要汇总报告：py _check_spec.py --report")
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,65 @@
+{
+  "knowledge_base": "G:\\工具库\\民国历史知识库_AI_V2.0_稳定版\\民国历史知识库\\_sandbox\\模拟知识库\\19民国",
+  "routes": {},
+  "template_routes": {},
+  "index_file": "00 首页/索引.md",
+  "vault_root": "",
+  "app_title": "历史知识库 · V1.0（配置驱动）",
+  "footer_types": {},
+  "type_keywords": {},
+  "place_keywords": [],
+  "default_tags": [
+    "历史"
+  ],
+  "ai": {
+    "provider": "deepseek",
+    "base_url": "https://api.deepseek.com/v1",
+    "api_key": "",
+    "model": "deepseek-chat",
+    "temperature": 0.3,
+    "persona": "",
+    "max_tokens": 8000
+  },
+  "template_sync": false,
+  "profiles": {
+    "g:/工具库/民国历史知识库_ai_v2.0_稳定版/民国历史知识库/_sandbox/模拟知识库/06-02两汉": {
+      "kb": "G:\\工具库\\民国历史知识库_AI_V2.0_稳定版\\民国历史知识库\\_sandbox\\模拟知识库\\06-02两汉",
+      "name": "06-02两汉",
+      "routes": {
+        "人物": "01人物",
+        "事件": "02事件",
+        "战争": "03战争",
+        "政权": "04政权",
+        "制度": "05制度",
+        "法律": "06法律",
+        "年号": "07年号",
+        "历史地理": "08历史地理",
+        "考古遗址": "09考古遗址",
+        "出土文献": "10出土文献",
+        "民族与族群": "11民族与族群",
+        "史料": "12史料",
+        "争议": "13争议"
+      },
+      "template_routes": {
+        "人物": "通用.md",
+        "事件": "通用.md",
+        "战争": "通用.md",
+        "政权": "通用.md",
+        "制度": "通用.md",
+        "法律": "通用.md",
+        "年号": "通用.md",
+        "历史地理": "通用.md",
+        "考古遗址": "通用.md",
+        "出土文献": "通用.md",
+        "民族与族群": "通用.md",
+        "史料": "通用.md",
+        "争议": "通用.md"
+      },
+      "templates_dir": "",
+      "footer_types": {},
+      "type_keywords": {},
+      "types": 13,
+      "updated": "2026-10-08 09:19:00"
+    }
+  }
+}

@@ -1,0 +1,4726 @@
+# -*- coding: utf-8 -*-
+"""
+core.py —— 民国历史知识库 · 核心引擎（配置驱动）
+
+设计原则（与需求一致）：
+  * 程序绝不接管、重命名、重新规划知识库目录；
+  * 程序只做：识别（扫描实际目录）→ 指向（类型→目录路由）→ 写入（创建/增量更新 MD）；
+  * 所有路径与映射来自 config.json，可在桌面端随时修改；
+  * 核心逻辑与具体知识库（19民国 / 10秦汉 / …）无关，切换知识库无需改代码。
+"""
+from __future__ import annotations
+
+import html
+import json
+import os
+import re
+import shutil
+import sys
+import urllib.parse
+import urllib.request
+from collections import OrderedDict
+from datetime import datetime
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# 配置
+# ---------------------------------------------------------------------------
+
+def app_dir() -> Path:
+    """程序所在目录（配置文件 / 备份 / 日志都放这里）。
+
+    * 源码运行：core.py 所在的项目目录；
+    * 打包成 exe（PyInstaller onefile 等）：exe 所在目录。
+      这里不能用 __file__：onefile 模式下它指向临时解包目录 _MEIPASS，
+      config.json 会被写进临时目录，程序一退出就丢。
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+BASE_DIR = app_dir()
+CONFIG_FILE = BASE_DIR / "config.json"
+
+
+def resource_path(name: str) -> Path:
+    """随程序分发的只读资源（如 app.ico）的路径。
+
+    打包成 onefile 后，资源被解到临时目录 sys._MEIPASS，必须从这里取。
+    """
+    base = getattr(sys, "_MEIPASS", None)
+    return (Path(base) if base else Path(__file__).resolve().parent) / name
+
+# 首次启动的可选提示路径（存在则预填，用户可随意换成其他知识库）
+DEFAULT_KB_HINT = r"G:\个人文件\知识库-历史\00-Inbox\历史\19民国"
+
+# 默认类型 → 目标目录 路由（针对 19民国 实际目录名；其他知识库在映射页重选即可）
+DEFAULT_ROUTES = {
+    "时间线": "01 时间线",
+    "人物": "02 人物图谱",
+    "派系": "03 派系图谱",
+    "军队": "04 军队与军事院校",
+    "国民党": "05 国民党全史",
+    "共产党": "06 共产党形成史",
+    "制度": "07 国家制度与财政",
+    "地区": "08 中国地图集（中文）",
+    "国际势力": "09 国际势力图谱",
+    "条约": "10 条约与原始文献",
+    "专题": "11 专题研究",
+    "事件": "12 事件数据库 ⭐",
+    "战役": "13 战役数据库 ⭐",
+    "史料": "14 史料数据库 ⭐",
+}
+
+# 默认类型 → 模板文件 路由（模板名与 格式规范.md「0.3 模板清单」一致；其余类型自动用 通用.md）
+DEFAULT_TEMPLATE_ROUTES = {
+    "时间线": "时间线.md",
+    "人物": "人物图谱.md",
+    "派系": "派系图谱.md",
+    "军队": "军队与军事院校.md",
+    "国民党": "国民党全史.md",
+    "共产党": "共产党形成史.md",
+    "制度": "国家制度与财政.md",
+    "地区": "中国地图集.md",
+    "国际势力": "国际势力图谱.md",
+    "条约": "条约与原始文献.md",
+    "专题": "通用.md",
+    "事件": "事件.md",
+    "战役": "战役.md",
+    "史料": "史料.md",
+}
+
+# 特殊目录名关键字（扫描时标记为“特殊目录”，不作为默认路由目标）
+SPECIAL_DIR_KEYWORDS = ("templates", "模板", "assets", "attachments", "附件", "资产", "图片", "pdf", "sources")
+
+INDEX_FILE_DEFAULT = "00 首页/索引.md"
+
+
+def default_config() -> dict:
+    """首启默认配置。knowledge_base 仅在真实存在时预填提示路径。"""
+    kb = ""
+    if Path(DEFAULT_KB_HINT).is_dir():
+        kb = DEFAULT_KB_HINT
+    return {
+        "knowledge_base": kb,
+        "templates_dir": "",              # 空 → <知识库>/Templates（模板）
+        "routes": dict(DEFAULT_ROUTES),   # 类型 → 目录名
+        "template_routes": dict(DEFAULT_TEMPLATE_ROUTES),  # 类型 → 模板文件名
+        "index_file": INDEX_FILE_DEFAULT, # 总索引相对路径（相对知识库根）
+        "ai": {
+            "provider": "deepseek",
+            "base_url": "https://api.deepseek.com/v1",
+            "api_key": "",
+            "model": "deepseek-chat",
+            "temperature": 0.3,
+            "max_tokens": 8000,           # 推理模型（deepseek-flash/reasoner）思考也占额度，小了会截断
+        },
+        "template_sync": False,           # 默认关：写入笔记时**不**自动往用户库 Templates（模板）/ 写任何东西
+        # 每个知识库一份档案（各自的路由/模板映射/模板库）；键 = profile_key(知识库路径)。
+        # 顶层 routes/template_routes 始终是"当前生效"的那一份，profiles 只是每库的存档。
+        "profiles": {},
+    }
+
+
+def load_config() -> dict:
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+        cfg = default_config()
+        for k, v in data.items():
+            if k in cfg and isinstance(v, type(cfg[k])):
+                cfg[k] = v
+        return cfg
+    return default_config()
+
+
+def write_text_keep_eol(path, text: str) -> str:
+    """写文本文件，**保留原文件换行符**：原文件是 CRLF 就写回 CRLF；文件不存在（新文件）则用 LF。
+
+    内部先把 text 归一化成 `\n` 再按目标风格输出，避免出现 `\r\r\n` 双重转换。
+    返回实际使用的换行符（"CRLF" / "LF"）。**不会**创建目录（目录必须已存在，符合"干净启动"原则）。
+    """
+    p = Path(path)
+    style = "LF"
+    try:
+        if p.is_file():
+            raw = p.read_bytes()[:65536]
+            style = "CRLF" if b"\r\n" in raw else "LF"
+    except Exception:
+        style = "LF"
+    body = str(text).replace("\r\n", "\n").replace("\r", "\n")
+    if style == "CRLF":
+        body = body.replace("\n", "\r\n")
+    with open(p, "w", encoding="utf-8", newline="") as f:
+        f.write(body)
+    return style
+
+
+def save_config(cfg: dict) -> None:
+    """原子写回配置：先写同目录临时文件再替换，避免半个 JSON 把配置写坏。"""
+    data = json.dumps(cfg, ensure_ascii=False, indent=2)
+    tmp = CONFIG_FILE.with_name(CONFIG_FILE.name + ".tmp")
+    tmp.write_text(data, encoding="utf-8")
+    os.replace(tmp, CONFIG_FILE)
+
+
+# ---------------------------------------------------------------------------
+# 知识库目录扫描 → 目录注册表
+# ---------------------------------------------------------------------------
+
+def scan_kb(root: str | Path) -> list[dict]:
+    """
+    扫描知识库根目录第一层子目录，建立注册表。
+    返回 [{name, path, file_count, md_count, role}]，按 name 排序。
+    role: "内容目录" / "特殊目录"
+    """
+    root = Path(root)
+    if not root.is_dir():
+        return []
+    rows = []
+    for d in sorted(root.iterdir(), key=lambda p: p.name):
+        if not d.is_dir():
+            continue
+        files = list(d.rglob("*.md")) if d.is_dir() else []
+        special = any(k.lower() in d.name.lower() for k in SPECIAL_DIR_KEYWORDS)
+        rows.append({
+            "name": d.name,
+            "path": str(d),
+            "file_count": len(list(d.iterdir())),
+            "md_count": len(files),
+            "role": "特殊目录" if special else "内容目录",
+        })
+    return rows
+
+
+def registry_names(rows: list[dict]) -> list[str]:
+    return [r["name"] for r in rows]
+
+
+def resolve_kb(cfg: dict) -> Path | None:
+    kb = (cfg.get("knowledge_base") or "").strip()
+    if not kb:
+        return None
+    p = Path(kb)
+    return p if p.is_dir() else None
+
+
+TPL_DIR_NAMES = ("Templates（模板）", "Templates", "模板", "Templates(模板)")
+TPL_DIR_UP_LEVELS = 4          # 知识库里没模板时，往上找几层（多时期库共用顶层模板库）
+
+# 目录名里需要跳过的"系统目录"（不是内容类型）
+DIR_SKIP_PARTS = ("模板", "templates", "assets", "attachments", "附件", "资产", "图片",
+                  "pdf", "sources", "首页", "索引", "总览", "index")
+DIR_NUM_PREFIX_RE = re.compile(r"^\d{1,3}(?:\s*[-—–]\s*\d{1,3})*\s*[-—–.、]?\s*")
+
+
+def list_template_files(tdir, depth: int = 2) -> list:
+    """模板库里的模板文件（**含子目录**，如 `古代社会模板/`、`近现代/`）。返回排序后的 list[Path]。"""
+    if not tdir:
+        return []
+    d = Path(tdir)
+    if not d.is_dir():
+        return []
+    out, seen = [], set()
+    for p in sorted(d.glob("*.md")):
+        if p.is_file() and p.name not in seen:
+            seen.add(p.name)
+            out.append(p)
+    if depth > 1:
+        for sub in sorted(x for x in d.iterdir() if x.is_dir()):
+            for p in sorted(sub.glob("*.md")):
+                if p.is_file() and p.name not in seen:
+                    seen.add(p.name)
+                    out.append(p)
+    return out
+
+
+def find_template_files(tdir, name: str) -> Path | None:
+    """在模板库里按文件名找模板（先顶层、再一层子目录）。"""
+    if not tdir or not str(name or "").strip():
+        return None
+    for p in list_template_files(tdir):
+        if p.name == str(name).strip():
+            return p
+    return None
+
+
+def profile_key(kb) -> str:
+    """知识库档案的键：归一化绝对路径（统一小写与分隔符），保证同一库永远同一个键。"""
+    s = str(kb or "").strip()
+    if not s:
+        return ""
+    try:
+        s = os.path.abspath(os.path.expanduser(s))
+    except Exception:
+        pass
+    return os.path.normcase(s).replace("\\", "/")
+
+
+def type_from_dir_name(dir_name: str) -> str:
+    """目录名 → 类型名：去掉编号前缀（`01 `、`07-02`、`13`）、末尾 ⭐ 与括号说明。"""
+    s = str(dir_name or "").strip()
+    if not s:
+        return ""
+    if "\\" in s or "/" in s:
+        s = Path(s).name
+    s = DIR_NUM_PREFIX_RE.sub("", s)
+    s = re.sub(r"\s*[⭐★]+\s*$", "", s)
+    s = re.sub(r"[（(][^）)]*[）)]\s*$", "", s)
+    return s.strip(" \t-_—–.、")
+
+
+def types_from_dirs(dir_names) -> dict:
+    """从目录名推"类型 → 目录"映射：`'01人物' → {'人物': '01人物'}`。
+
+    跳过系统目录（模板/Assets/Attachments/附件/首页/索引…）；同名类型先出现的优先。
+    """
+    out: dict = {}
+    for raw in (dir_names or []):
+        name = str(raw or "").strip()
+        if not name:
+            continue
+        low = name.lower()
+        if any(k in low for k in DIR_SKIP_PARTS):
+            continue
+        t = type_from_dir_name(name)
+        if not t or len(t) > 24 or t in out:
+            continue
+        out[t] = name
+    return out
+
+
+TPL_TYPE_ALIASES = {
+    # 类型名 → 模板名（同一个意思的两种叫法；古代库/近现代库通用）
+    "历史地理": "地理", "地区": "地理", "考古遗址": "考古", "出土文献": "出土文献",
+    "民族与族群": "民族与族群", "争议": "争议", "人物": "人物", "事件": "事件",
+    "战争": "战争", "战役": "战役", "政权": "政权", "制度": "制度", "法律": "法律",
+    "年号": "年号", "史料": "史料", "军队": "军队", "派系": "派系", "时间线": "时间线",
+    "条约": "条约", "国际势力": "国际势力", "职官": "职官", "帝王": "帝王", "朝代": "朝代",
+    "经济": "经济", "重大工程": "重大工程", "思想流派": "思想流派",
+    "官署与机构": "官署与机构", "传世典籍": "传世典籍", "专题": "通用",
+}
+
+
+def pick_template_for_type(cfg: dict, type_: str, fallback: str = "通用.md") -> str:
+    """给类型挑模板名：① 同名 ② 同义词表 ③ 包含关系（长度差 ≤2） ④ fallback。
+
+    只在**当前生效模板库**（含其子目录）里找，不会把别的库的模板名带进来。
+    """
+    t = str(type_ or "").strip()
+    if not t:
+        return fallback
+    td = templates_dir(cfg)
+    names = [p.name for p in list_template_files(td)] if td else []
+    if f"{t}.md" in names:
+        return f"{t}.md"
+    alias = TPL_TYPE_ALIASES.get(t)
+    if alias and f"{alias}.md" in names:
+        return f"{alias}.md"
+    cands = sorted((abs(len(Path(n).stem) - len(t)), n) for n in names
+                   if t in Path(n).stem or Path(n).stem in t)
+    if cands and cands[0][0] <= 2:
+        return cands[0][1]
+    return fallback
+
+
+def detect_route_profile(cfg: dict, kb=None) -> dict:
+    """扫描一个知识库的目录，生成它自己的 {"routes":…, "template_routes":…}。
+
+    * `routes`：用 `types_from_dirs`（目录名去编号前缀当类型名）；
+    * `template_routes`：按**当前生效模板库**给每个类型挑模板 —— 同名 → 同义词（历史地理→地理、
+      考古遗址→考古…）→ 包含关系 → `通用.md`；若模板库和程序内置都没有，才落 `通用.md`。
+    """
+    kb_path = Path(kb) if kb else resolve_kb(cfg)
+    if kb_path is None or not Path(kb_path).is_dir():
+        return {"routes": {}, "template_routes": {}}
+    dirs = [d.name for d in sorted(Path(kb_path).iterdir()) if d.is_dir()]
+    routes = types_from_dirs(dirs)
+    probe = dict(cfg)
+    probe["routes"] = dict(routes)
+    probe["template_routes"] = {}                     # 只按"目录同名模板/通用/内置"解析
+    tpl_routes: dict = {}
+    for t in routes:
+        name = pick_template_for_type(cfg, t, "通用.md")
+        if name == "通用.md":                          # 模板库里没有 → 再看看程序内置模板
+            try:
+                p, note = resolve_template(probe, t)
+                if p is not None:
+                    name = p.name
+                else:
+                    m = re.search(r"[:：]\s*([^\s（(]+\.md)", str(note or ""))
+                    if m:
+                        name = m.group(1)
+            except Exception:
+                pass
+        tpl_routes[t] = name
+    return {"routes": routes, "template_routes": tpl_routes}
+
+
+def get_kb_profile(cfg: dict, kb=None) -> dict:
+    """取某个知识库的档案（没有就返回 {}）。"""
+    key = profile_key(kb if kb is not None else cfg.get("knowledge_base"))
+    if not key:
+        return {}
+    prof = (cfg.get("profiles") or {}).get(key)
+    return dict(prof) if isinstance(prof, dict) else {}
+
+
+def save_kb_profile(cfg: dict, kb=None, save: bool = True) -> dict:
+    """把当前 `cfg` 顶层的 routes / template_routes / templates_dir 存成该库的档案。"""
+    kb_str = str(kb if kb is not None else cfg.get("knowledge_base") or "").strip()
+    key = profile_key(kb_str)
+    if not key:
+        return {}
+    prof = {
+        "kb": kb_str,
+        "name": Path(kb_str).name,
+        "routes": dict(cfg.get("routes") or {}),
+        "template_routes": dict(cfg.get("template_routes") or {}),
+        "templates_dir": str(cfg.get("templates_dir") or ""),
+        "types": len(cfg.get("routes") or {}),
+        "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    cfg.setdefault("profiles", {})[key] = prof
+    if save:
+        save_config(cfg)
+    return prof
+
+
+def switch_kb(cfg: dict, new_kb, save: bool = True) -> dict:
+    """切换知识库：旧库存档 → 换 knowledge_base → 载入新库档案。
+
+    **不做任何推断**：新库如果没有档案，映射一律置空并提示用户自己去②页配置
+    （要"扫描生成"必须由用户显式点②页的「🔎 扫描当前库目录生成类型」，那走 detect_route_profile）。
+
+    返回 {ok, kb, profile_found, types, routes, templates_dir, report}
+    """
+    out = {"ok": False, "kb": "", "profile_found": False, "types": 0, "routes": {},
+           "templates_dir": "", "report": []}
+    new_str = str(new_kb or "").strip()
+    if not new_str:
+        out["report"].append("没有指定知识库目录")
+        return out
+    if not Path(new_str).is_dir():
+        out["report"].append(f"目录不存在：{new_str}")
+        return out
+    old_str = str(cfg.get("knowledge_base") or "").strip()
+    same_kb = bool(old_str) and profile_key(old_str) == profile_key(new_str)
+    if old_str and not same_kb:
+        save_kb_profile(cfg, old_str, save=False)     # ① 先把旧库的映射存档
+        out["report"].append(f"已存档旧库档案：{Path(old_str).name}")
+    cfg["knowledge_base"] = new_str
+    prof = get_kb_profile(cfg, new_str)
+    if prof and (prof.get("routes") or {}):
+        out["profile_found"] = True
+        cfg["routes"] = dict(prof.get("routes") or {})
+        if prof.get("template_routes"):
+            cfg["template_routes"] = dict(prof["template_routes"])
+        out["report"].append(f"已载入该库档案（{len(cfg['routes'])} 个类型"
+                             + (f"，更新于 {prof.get('updated')}" if prof.get("updated") else "") + "）")
+    elif same_kb:
+        # 同一个库、只是重新保存：把当前映射存成它的档案，**不要**用扫描结果覆盖手改过的映射
+        save_kb_profile(cfg, new_str, save=False)
+        out["profile_found"] = True
+        out["report"].append(f"已为该库建立档案（沿用当前 {len(cfg.get('routes') or {})} 个类型的映射）")
+    else:                                             # ③ 没有档案 → 一律置空，绝不推断
+        cfg["routes"] = {}
+        cfg["template_routes"] = {}
+        out["report"].append(
+            "该知识库还没有配置：请到②页点「🔎 扫描当前库目录生成类型」或手工添加"
+            "「类型 → 目录」，再到④页选择模板库")
+    # ④ 模板库：档案里有且存在就用；否则清空（不再自动向上级目录查找）
+    td = str(prof.get("templates_dir") or "").strip() if prof else ""
+    if td and Path(td).is_dir():
+        cfg["templates_dir"] = td
+    else:
+        cfg.pop("templates_dir", None)
+    cur_td = templates_dir(cfg)
+    out.update(ok=True, kb=new_str, types=len(cfg.get("routes") or {}),
+               routes=dict(cfg.get("routes") or {}),
+               templates_dir=str(cur_td) if cur_td else "")
+    if not cfg.get("templates_dir"):
+        out["report"].append(
+            "模板库：未选择（到④页「模板库」下拉或「📂 浏览…」显式选一个；也可用知识库自带的 "
+            "Templates（模板）目录）")
+    else:
+        out["report"].append("模板库：" + (str(cur_td) if cur_td else "（指定的目录不存在）"))
+    if save:
+        save_config(cfg)
+    return out
+
+
+def find_template_dirs(cfg: dict) -> list:
+    """所有候选模板库（绝对路径字符串，已去重）：① 配置里指定的 ② 知识库自带的 ③ 上级目录共用的。"""
+    out: list = []
+    td = str(cfg.get("templates_dir") or "").strip()
+    kb = resolve_kb(cfg)
+    if td:
+        p = Path(td)
+        if not p.is_absolute() and kb is not None:
+            p = kb / td
+        out.append(str(p))
+    if kb is not None:
+        for name in TPL_DIR_NAMES:
+            cand = kb / name
+            if cand.is_dir() and str(cand) not in out:
+                out.append(str(cand))
+        up = kb.parent
+        for _ in range(TPL_DIR_UP_LEVELS):
+            if up is None or up == up.parent:
+                break
+            for name in TPL_DIR_NAMES:
+                cand = up / name
+                if cand.is_dir() and str(cand) not in out:
+                    out.append(str(cand))
+            up = up.parent
+    for base in list(out):                            # 模板库里的**子目录**也作为候选（如 古代社会模板 / 近现代）
+        try:
+            for sub in sorted(x for x in Path(base).iterdir() if x.is_dir()):
+                if list_template_files(sub, depth=1) and str(sub) not in out:
+                    out.append(str(sub))
+        except Exception:
+            continue
+    return out
+
+
+def templates_dir(cfg: dict) -> Path | None:
+    """模板库目录：**只用用户显式选定的**，绝不自动推断。
+
+    ① `cfg["templates_dir"]`（④页「模板库」下拉 / 「📂 浏览…」选定）
+    ② `<知识库>/Templates（模板）`（知识库自带，属于用户自己的库结构）
+    都没有 → 返回 None（④页显示"未选择模板库"）。
+    候选建议列表仍在 `find_template_dirs()` 里，但那只是**供用户挑选的建议**，不会被自动采用。
+    """
+    td = str(cfg.get("templates_dir") or "").strip()
+    kb = resolve_kb(cfg)
+    if td:
+        p = Path(td)
+        if not p.is_absolute() and kb is not None:
+            p = kb / td
+        return p if p.is_dir() else None
+    if kb is not None:
+        for name in TPL_DIR_NAMES:
+            cand = kb / name
+            if cand.is_dir():
+                return cand
+    return None
+
+
+def set_templates_dir(cfg: dict, path, save: bool = True) -> dict:
+    """设置模板库目录（空串 = 恢复默认：知识库自带 → 上级共用）。返回 {ok, path, count, report}"""
+    out = {"ok": False, "path": "", "count": 0, "report": []}
+    p = str(path or "").strip()
+    if p:
+        cand = Path(p)
+        kb = resolve_kb(cfg)
+        if not cand.is_absolute() and kb is not None:
+            cand = kb / p
+        if not cand.is_dir():
+            out["report"].append(f"目录不存在：{cand}")
+            return out
+        cfg["templates_dir"] = str(cand)
+        out["path"] = str(cand)
+    else:
+        cfg.pop("templates_dir", None)
+        cur = templates_dir(cfg)
+        out["path"] = str(cur) if cur else ""
+    if save:
+        save_config(cfg)
+    got = templates_dir(cfg)
+    out["count"] = len(list(got.glob("*.md"))) if got else 0
+    out["ok"] = got is not None
+    out["report"].append(f"模板库：{out['path'] or '（没有找到）'}"
+                         + (f"｜.md 模板 {out['count']} 个" if out["count"] else ""))
+    return out
+
+
+def ensure_templates_dir(cfg: dict, create: bool = True) -> Path | None:
+    """模板目录：配置优先，其次 知识库自带/上级共用，都没有才（create=True 时）在知识库里新建。"""
+    cur = templates_dir(cfg)
+    if cur is not None:
+        return cur
+    kb = resolve_kb(cfg)
+    if kb is None:
+        return None
+    p = kb / "Templates（模板）"
+    if not p.is_dir():
+        if not create:
+            return None
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            return None
+    return p
+
+
+def resolve_type_alias(cfg: dict, type_: str) -> tuple[str, str]:
+    """把 AI 判出的类型名对齐到②页配置的类型键。返回 (类型, 说明)。
+
+    AI 常给「历史人物」「战役/战斗」「军事组织」这类说法，而映射表里是「人物/战役/军队」。
+    精确匹配优先；否则按包含关系取最长的那个键（避免把「战役」错配到「战争」之外的键）；
+    实在匹配不上就原样返回，由调用方给出清晰的报错。
+    """
+    type_ = str(type_ or "").strip()
+    routes = cfg.get("routes") or {}
+    if not type_ or type_ in routes:
+        return type_, ""
+    clean = re.sub(r"[\s/·、，,（）()]+", "", type_)
+    for key in routes:
+        if re.sub(r"[\s/·、，,（）()]+", "", key) == clean:
+            return key, f"类型「{type_}」按②页映射归到「{key}」"
+    partial = [k for k in routes if k and (k in type_ or type_ in k)]
+    if partial:
+        best = max(partial, key=len)
+        return best, f"类型「{type_}」按②页映射归到「{best}」"
+    return type_, ""
+
+
+def resolve_route_dir(cfg: dict, type_: str) -> tuple[Path | None, str]:
+    """
+    类型 → 实际目录。返回 (路径, 状态说明)。
+    优先精确匹配目录名，其次“去掉星号/空格后的归一化匹配”，找不到返回 None。
+    类型名与②页映射不完全一致时（AI 常见）先做一次别名归并。
+    """
+    kb = resolve_kb(cfg)
+    if kb is None:
+        return None, "知识库未设置"
+    alias_note = ""
+    if type_ not in (cfg.get("routes") or {}):
+        type_, alias_note = resolve_type_alias(cfg, type_)
+    target = (cfg.get("routes") or {}).get(type_, "")
+    if not target:
+        known = "、".join(sorted((cfg.get("routes") or {}).keys())) or "（空）"
+        return None, f"类型「{type_}」未配置路由（②页可用的类型：{known}）"
+    rows = scan_kb(kb)
+    exact = next((r for r in rows if r["name"] == target), None)
+    if exact:
+        return Path(exact["path"]), (alias_note + "；" if alias_note else "") + f"命中「{target}」"
+    norm = normalize_dir_name(target)
+    fuzzy = next((r for r in rows if normalize_dir_name(r["name"]) == norm), None)
+    if fuzzy:
+        return Path(fuzzy["path"]), (alias_note + "；" if alias_note else "") + f"归一化命中「{fuzzy['name']}」（配置为「{target}」）"
+    known = "、".join(sorted((cfg.get("routes") or {}).keys())) or "（空）"
+    return None, (f"目录不存在：{target}（请在 Obsidian 中创建后重新扫描，或在映射页重新指定；"
+                  f"②页可用的类型：{known}）")
+
+
+def normalize_dir_name(name: str) -> str:
+    return re.sub(r"[\s⭐*★\-—]+", "", name).lower()
+
+
+# ---------------------------------------------------------------------------
+# 模板
+# ---------------------------------------------------------------------------
+
+PASTED_TPL_DIRNAME = "_模板"
+
+
+def pasted_templates_dir(create: bool = False) -> Path:
+    """**程序自己的**「粘贴模板」目录：`<程序目录>/_模板/<类型名>.md`（默认可能为空）。
+
+    环境变量 `KB_TPL_DIR` 可覆盖（测试隔离用）。这个目录在程序目录里，**不在用户知识库里**。
+    """
+    env = (os.environ.get("KB_TPL_DIR") or "").strip()
+    d = Path(env) if env else (app_dir() / PASTED_TPL_DIRNAME)
+    if create:
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+    return d
+
+
+def list_pasted_templates() -> dict:
+    """已保存的粘贴模板：{类型名: Path}。"""
+    d = pasted_templates_dir()
+    if not d.is_dir():
+        return {}
+    return {q.stem: q for q in sorted(d.glob("*.md"))}
+
+
+def save_pasted_template(cfg: dict, type_: str, text: str, save: bool = True) -> dict:
+    """把用户**粘贴**的模板正文存到 `<程序目录>/_模板/<类型名>.md`，并把它记进 `template_routes`。
+
+    只写程序自己的目录，绝不写用户的模板文件夹。
+    返回 {ok, path, type, report}
+    """
+    out = {"ok": False, "path": "", "type": "", "report": []}
+    t = sanitize_title(str(type_ or "").strip())
+    if not t:
+        out["report"].append("请填写类型名（例如 人物）")
+        return out
+    body = str(text or "")
+    if not body.strip():
+        out["report"].append("模板内容是空的")
+        return out
+    d = pasted_templates_dir(create=True)
+    target = d / f"{t}.md"
+    try:
+        write_text_keep_eol(target, body.rstrip() + "\n")
+    except Exception as exc:  # noqa: BLE001
+        out["report"].append(f"保存失败：{type(exc).__name__}: {exc}")
+        return out
+    cfg.setdefault("template_routes", {})[t] = target.name
+    tpl_routes = cfg.get("template_routes") or {}
+    probe = dict(cfg)
+    probe["template_routes"] = tpl_routes
+    path, _note = resolve_template(probe, t)
+    out.update(ok=True, type=t, path=str(path or target))
+    out["report"].append(f"已保存到 {target}")
+    if save:
+        save_config(cfg)
+    return out
+
+
+def template_sources(cfg: dict) -> list:
+    """模板来源（**按优先级**，全部由用户显式提供；程序内置模板已取消）：
+
+    ① `cfg["templates_dir"]`（④页「模板库」选定/浏览选定）
+    ② `<程序目录>/_模板/`（④页「📋 粘贴模板」保存的地方）
+    ③ `<知识库>/Templates（模板）`（用户自己库里的模板目录）
+    都不存在 → 空列表 = 「未提供模板」。
+    """
+    out: list = []
+    td = str(cfg.get("templates_dir") or "").strip()
+    kb = resolve_kb(cfg)
+    if td:
+        q = Path(td)
+        if not q.is_absolute() and kb is not None:
+            q = kb / td
+        if q.is_dir():
+            out.append(q)
+    pasted = pasted_templates_dir()
+    if pasted.is_dir() and pasted not in out:
+        out.append(pasted)
+    if kb is not None:
+        for name in TPL_DIR_NAMES:
+            cand = kb / name
+            if cand.is_dir() and cand not in out:
+                out.append(cand)
+                break
+    return out
+
+
+TEMPLATE_MISSING_HINT = ("未找到「{t}」的模板：请到④页「📂 选择模板文件夹」选一个模板目录，"
+                         "或用「📋 粘贴模板」把模板粘进来")
+
+
+def resolve_template(cfg: dict, type_: str) -> tuple[Path | None, str]:
+    """
+    类型 → 模板文件。返回 (模板路径, 状态说明)。
+    规则（优先级从高到低）：
+      1) `template_routes` 里显式配置的模板（②页/配置文件指定的，**最优先**，
+         这样仓库里即使留着同名旧模板也不会盖掉你指定的那个）；
+      2) 目录同名模板：类型 → 路由目录 → Templates（模板）/‹目录名去掉数字前缀›.md
+         （如 制度→07 国家制度与财政→国家制度与财政.md，人物→02 人物图谱→人物图谱.md）；
+      3) 通用.md；4) 内置模板。
+    """
+    sources = template_sources(cfg)                    # 只见用户显式提供的来源，无内置兜底
+
+    # 1) 显式映射优先（**支持模板库子目录**，如 古代社会模板/制度.md）
+    fname = str((cfg.get("template_routes") or {}).get(type_, "") or "").strip()
+    if fname:
+        for sd in sources:
+            q = find_template_files(sd, fname)
+            if q is not None:
+                return q, f"模板文件：{fname}"
+
+    # 2) 与路由目录同名的模板（如 制度 → 制度.md）
+    dir_path, _ = resolve_route_dir(cfg, type_)
+    if dir_path is not None:
+        dirname = re.sub(r"^\d+\s*", "", dir_path.name)
+        dirname = dirname.replace(" ⭐", "").replace("（中文）", "").strip()
+        for cand in (f"{dirname}.md", f"{type_}.md"):
+            for sd in sources:
+                q = find_template_files(sd, cand)
+                if q is not None:
+                    return q, f"目录同名模板：{cand}"
+
+    # 3) 按类型名在同义词表里挑（历史地理→地理.md、考古遗址→考古.md …）
+    for sd in sources:
+        picked = pick_template_for_type({**cfg, "templates_dir": str(sd)}, type_, "")
+        if picked and picked != "通用.md":
+            q = find_template_files(sd, picked)
+            if q is not None:
+                return q, f"按类型匹配模板：{picked}"
+
+    # 4) 通用模板（用户提供的来源里有就用）
+    for sd in sources:
+        gp = find_template_files(sd, "通用.md")
+        if gp is not None:
+            return gp, "通用模板：通用.md"
+    return None, TEMPLATE_MISSING_HINT.format(t=type_)
+
+
+def tpl_stem(name: str) -> str:
+    """模板文件名 → stem（去掉 .md；不用 str.removesuffix，兼容 Python 3.8）。"""
+    n = str(name or "").strip()
+    return n[:-3] if n.lower().endswith(".md") else n
+
+
+def load_template_text(cfg: dict, type_: str) -> tuple[str, str]:
+    """返回 (模板文本, 状态说明)。**只用用户提供的模板**（选定文件夹 / 粘贴模板 / 库内 Templates）。
+
+    找不到时返回 ("", 提示文案)，调用方必须据此**明确失败**，不要用任何内置模板兜底。
+    """
+    type_, _alias = resolve_type_alias(cfg, type_)
+    path, note = resolve_template(cfg, type_)
+    if path is not None:
+        try:
+            return path.read_text(encoding="utf-8"), note
+        except Exception as exc:  # noqa: BLE001
+            return "", f"模板读取失败（{path}）：{type(exc).__name__}: {exc}"
+    return "", note
+
+
+# ---------------------------------------------------------------------------
+# 标题规范化
+# ---------------------------------------------------------------------------
+
+ILLEGAL_CHARS = re.compile(r'[\\/:*?"<>|\r\n]')
+
+
+def sanitize_title(title: str) -> str:
+    t = ILLEGAL_CHARS.sub("", title).strip()
+    t = re.sub(r"\s+", " ", t)
+    return t or "未命名"
+
+
+def ensure_timeline_title(title: str, year_hint: str = "") -> str:
+    """时间线类命名规范：YYYY年-标题。缺年份时从 hint 或标题内提取。"""
+    m = re.search(r"(\d{4})", title)
+    year = m.group(1) if m else (re.search(r"(\d{4})", year_hint).group(1) if year_hint else "")
+    if year and not re.match(r"^\d{4}年-", title):
+        rest = re.sub(r"^\d{4}", "", title)
+        title = f"{year}年-{rest}"
+    return sanitize_title(title)
+
+
+# ---------------------------------------------------------------------------
+# Frontmatter（简单 YAML）
+# ---------------------------------------------------------------------------
+
+def split_frontmatter(text: str) -> tuple[dict | None, str]:
+    """拆 Obsidian 风格 frontmatter。返回 (字段 dict, 正文)。"""
+    if not text.startswith("---"):
+        return None, text
+    lines = text.splitlines()
+    end = None
+    for i in range(1, min(len(lines), 300)):
+        if lines[i].strip() == "---":
+            end = i
+            break
+    if end is None:
+        return None, text
+    fields = parse_simple_yaml("\n".join(lines[1:end]))
+    body = "\n".join(lines[end + 1:])
+    return fields, body
+
+
+def parse_simple_yaml(s: str) -> dict:
+    out = {}
+    lines = s.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if not line.strip() or line.lstrip().startswith("#") or line.startswith(" "):
+            i += 1
+            continue
+        if ":" not in line:
+            i += 1
+            continue
+        key, _, val = line.partition(":")
+        key = key.strip()
+        val = val.strip()
+        if val == "":
+            items = []
+            j = i + 1
+            while j < len(lines) and re.match(r"^\s*- ", lines[j]):
+                items.append(re.sub(r"^\s*- ", "", lines[j]).strip())
+                j += 1
+            out[key] = items
+            i = j
+        else:
+            out[key] = val
+            i += 1
+    return out
+
+
+def serialize_simple_yaml(fields: dict) -> str:
+    out = []
+    for k, v in fields.items():
+        if isinstance(v, list):
+            items = [str(x) for x in v if str(x).strip()]
+            if not items:                      # 空列表写成 []，Dataview 也认
+                out.append(f"{k}: []")
+                continue
+            out.append(f"{k}:")
+            for item in items:
+                out.append(f"  - {item}")
+        else:
+            out.append(f"{k}: {v}")
+    return "\n".join(out)
+
+
+def is_empty_value(v) -> bool:
+    if v is None:
+        return True
+    if isinstance(v, list):
+        return len(v) == 0 or all(str(x).strip() == "" for x in v)
+    return str(v).strip() in ("", "-", "[]", "[[]]", "（原始档案 / 回忆录 / 报刊 / 著作 / 口述 / 影像…）")
+
+
+def split_list_value(v) -> list[str]:
+    """把 AI 给的标量值按常见分隔符切成列表项（用于列表型 frontmatter 字段）。"""
+    if isinstance(v, list):
+        return [str(x).strip() for x in v if str(x).strip()]
+    s = str(v).strip()
+    parts = re.split(r"[、，,;；/|]", s)
+    parts = [p.strip() for p in parts if p.strip()]
+    return parts
+
+
+def _coerce_field(key: str, val):
+    """列表型字段一律写成列表（frontmatter 是结构化数据源，Dataview 要能按项过滤）。"""
+    if key in LIST_FIELDS:
+        if isinstance(val, list):
+            return [str(x).strip() for x in val if str(x).strip()]
+        return split_list_value(val)
+    return normalize_field_value(val)
+
+
+def update_frontmatter(fields: dict, new_fields: dict, report: list[str]) -> dict:
+    """
+    增量更新 frontmatter 字段：只填空值，不覆盖已有内容。
+    返回按原顺序（新字段插在 tags / 标签 前）的 dict。
+    """
+    result = OrderedDict(fields)
+    tag_key = next((k for k in result if k in ("标签", "tags")), None)
+    for key, val in new_fields.items():
+        if not key or key in ("标签", "tags"):
+            continue
+        if key in result:
+            if is_empty_value(result[key]):
+                result[key] = _normalize_to_existing_kind(result[key], val, key)
+                report.append(f"frontmatter 填充：{key}")
+            else:
+                report.append(f"frontmatter 保留已有：{key}")
+        else:
+            pos = list(result.keys()).index(tag_key) if tag_key else len(result)
+            items = list(result.items())
+            items.insert(pos, (key, _coerce_field(key, val)))
+            result = OrderedDict(items)
+            report.append(f"frontmatter 新增：{key}")
+    return result
+
+
+def normalize_field_value(val) -> str | list[str]:
+    if isinstance(val, list):
+        return [str(x).strip() for x in val if str(x).strip()]
+    s = str(val).strip()
+    if not s or is_empty_value(s):
+        return ""
+    return s
+
+
+LIST_SEPARATORS = "、，,;；/|"
+
+
+def _normalize_to_existing_kind(old, val, key: str = "") -> str | list[str]:
+    """按现有字段形态写入：列表型字段永远是列表；标量字段（如 date）保持标量。"""
+    if isinstance(old, list) or key in LIST_FIELDS:
+        items = split_list_value(val)
+        if key in LIST_FIELDS or len(items) > 1 or (isinstance(val, str) and any(sep in val for sep in LIST_SEPARATORS)):
+            return items
+        return items[0] if len(items) == 1 else ""
+    return normalize_field_value(val)
+
+
+# ---------------------------------------------------------------------------
+# 正文小节解析 / 合并（## 与 ### 均作为小节边界）
+# ---------------------------------------------------------------------------
+
+HEADER_RE = re.compile(r"^(#{2,3}) (.+?)\s*$")
+
+
+def header_norm(header: str) -> str:
+    # 忽略层级符号（#）与空格：让 "三、事件经过" 与 "## 三、事件经过"、"(###) 起因" 互相匹配
+    return re.sub(r"[#\s]+", "", header)
+
+
+def parse_sections(text: str) -> OrderedDict:
+    """解析正文为 {header_norm: [原始标题行(含#), [行...]]}，保持出现顺序。"""
+    sections = OrderedDict()
+    cur = None
+    for line in text.splitlines():
+        m = HEADER_RE.match(line)
+        if m:
+            label = m.group(0).strip()
+            norm = header_norm(label)
+            sections[norm] = [label, []]
+            cur = norm
+        elif cur is not None:
+            sections[cur][1].append(line)
+    return sections
+
+
+def build_body(sections: OrderedDict) -> str:
+    lines = []
+    for norm, (label, body) in sections.items():
+        lines.append(label)
+        if body:
+            lines.extend(body)
+    return "\n".join(lines)
+
+
+PLACEHOLDER_BLOCKQUOTE = re.compile(r"^>\s*(用一段话|概括|为什么|TODO|待补充)")
+
+
+EMPTY_VALUE_RE = re.compile(r"^[-—–~]{1,3}$|^(?:无|暂无|N/?A|待补|未知)$", re.I)
+
+
+def _is_placeholder_line(raw: str) -> bool:
+    """这一行是不是「空位」（供 is_fillable / 字段填空共用）。
+
+    认得这些写法（格式规范 §1 总则第 7 条及其模板变体）：
+      空行 / 纯注释 / 未渲染的模板表达式 /
+      `- ` `- [[]]` / `- **字段**：` / `- **字段**：[[]]` /
+      `- **甲方**：<!-- TODO -->（指挥官：…，兵力：…）`（注释 + 括号提示）/
+      `1. <!-- TODO: 待补 -->`（编号占位）/ `（胜利/失败/停战）`（纯括号提示）
+    """
+    s = str(raw).strip()
+    if not s:
+        return True
+    s = HTML_COMMENT_RE.sub("", s)
+    s = TPL_EXPR_RE.sub("", s)
+    s = re.sub(r"<%\*.*?%>", "", s, flags=re.S)
+    s = s.strip()
+    if not s:
+        return True
+    if re.match(r"^\*\*关联(模块)?\*\*\s*[:：]", s):          # 页脚不参与“小节是否为空”的判断
+        return True
+    if re.fullmatch(r"-{2,}", s):
+        return True
+    if re.fullmatch(r"[（(]?\d{1,2}\s*[.、)）]?", s):        # 1. / 2) / （3）
+        return True
+    if re.fullmatch(r"[（(][^（）()]*[)）]", s):              # 纯括号提示
+        return True
+    bullet = re.match(r"^[-*+]\s*", s)                  # 只剥列表符号，别把 ** 也剥掉
+    body = s[bullet.end():].strip() if bullet else s.strip()
+    if re.fullmatch(r"-{2,}", body) or body in ("", "[[]]", "[]"):
+        return True
+    hint = r"(?:[（(][^（）()]*[)）]\s*)*"          # 字段名与冒号之间允许夹「（若有）」这类提示
+    fm = (re.match(rf"^\s*[-*+]?\s*\*\*\s*([^*]+?)\s*\*\*\s*{hint}[:：]\s*(.*)$", s)
+          or re.match(rf"^\*\*([^*]+?)\*\*\s*{hint}[:：]\s*(.*)$", body))
+    if fm:
+        rest = re.sub(r"[（(][^（）()]*[)）]", "", fm.group(2)).strip()   # 去掉括号提示
+        if rest in ("", "[[]]", "[]") or EMPTY_VALUE_RE.match(rest):
+            return True
+    plain = re.match(r"^([^：:]{1,26})\s*[:：]\s*(.*)$", body)           # 无 ** 的字段行
+    if plain:
+        rest = re.sub(r"[（(][^（）()]*[)）]", "", plain.group(2)).strip()
+        if rest in ("", "[[]]", "[]") or EMPTY_VALUE_RE.match(rest):
+            return True
+    if body.startswith("[[]]"):
+        return True
+    return False
+
+
+def is_fillable(section_body: list[str]) -> bool:
+    """小节是否可填充：所有行都是空位就算空位（详见 _is_placeholder_line）。"""
+    for raw in section_body:
+        s = str(raw).strip()
+        if not s:
+            continue
+        if _is_placeholder_line(raw):
+            continue
+        if s.startswith(">"):                       # 引用块占位（> 用一段话概括…）
+            inner = HTML_COMMENT_RE.sub("", s.lstrip(">")).strip()
+            if not inner or PLACEHOLDER_TEXT.search(inner):
+                continue
+        return False
+    return True
+
+
+def _ai_field_map(ai_body: list) -> dict:
+    """从 AI 的行里抽 `- **字段**：值` / `字段：值`，供表单式小节逐字段填空。"""
+    out: dict = {}
+    for raw in ai_body or []:
+        s = str(raw).strip()
+        bullet = re.match(r"^[-*+]\s*", s)      # 只剥列表符号，别把 ** 也剥掉
+        if bullet:
+            s = s[bullet.end():].strip()
+        m = (re.match(r"^\*\*\s*([^*]+?)\s*\*\*\s*[:：]\s*(.+)$", s)
+             or re.match(r"^([^：:]{1,14})\s*[:：]\s*(.+)$", s))
+        if m:
+            key, val = m.group(1).strip(), m.group(2).strip()
+            if key and val:
+                out.setdefault(key, val)
+    return out
+
+
+def _match_field(name: str, fields: dict) -> str:
+    """把一个模板字段名对到 AI 给的字段值：先精确，再唯一包含（如 所属战争 ↔ 战争）。"""
+    if name in fields:
+        return fields[name]
+    cands = [k for k in fields if len(k) >= 2 and (k in name or name in k)]
+    if len(cands) == 1:
+        return fields[cands[0]]
+    return ""
+
+
+def _fill_table_cells(old_body: list, ai_body: list) -> tuple:
+    """填空表格：模板里 `| 总兵力 |  |  |` 这种空单元格，用 AI 同名字段的值补上。
+
+    值里若含明显分隔（` / `、`、`、`vs`、`；`），前两段分别填进两个空格。
+    返回 (新正文 | None, 用掉的字段名集合)。
+    """
+    fields = _ai_field_map(ai_body)
+    if not fields:
+        return None, set()
+    out, changed, used = [], False, set()
+    for raw in old_body:
+        line, s = raw, str(raw).strip()
+        if s.startswith("|") and s.endswith("|") and not set(s) <= set("|-: "):
+            cells = [c.strip() for c in s.strip("|").split("|")]
+            if len(cells) >= 3 and cells[0]:
+                name = re.sub(r"[*`\s]", "", cells[0])
+                val = _match_field(name, fields)
+                if val and any(not c for c in cells[1:]):
+                    if " / " in val:                       # 优先按「 / 」分左右两方（如 林彪、聂荣臻 / 板垣征四郎）
+                        parts = [p.strip() for p in val.split(" / ") if p.strip()]
+                    else:
+                        parts = [p for p in re.split(r"\s*(?:、|\bvs\b|VS|；|;)\s*", val) if p.strip()]
+                    new_cells = list(cells)
+                    for i in range(1, len(new_cells)):
+                        if not new_cells[i] and parts:
+                            new_cells[i] = parts.pop(0)
+                            changed = True
+                    indent = raw[: len(raw) - len(raw.lstrip())]
+                    line = indent + "| " + " | ".join(new_cells) + " |"
+                    used.add(name)
+        out.append(line)
+    return (out if changed else None), used
+
+
+def _fill_empty_fields(old_body: list, ai_body: list) -> list | None:
+    """表单式小节（时间/地点已自动填、还留着空字段）的合并：
+
+    1) 按字段名把 AI 的值填进空字段行（`- **结果**：<!-- TODO -->` → `- **结果**：…`）；
+    2) 名字对不上的 AI 行**追加到小节末尾**（不丢信息），但小节里已有的字段（时间/地点）不重复追加。
+    什么都没做则返回 None（保持原样）。
+    """
+    fields = _ai_field_map(ai_body)
+    if not fields and not [x for x in (ai_body or []) if str(x).strip()]:
+        return None                                # 真的没有内容才返回 None
+    existing_names: set = set()
+    for raw in old_body:
+        m = re.match(r"^\s*[-*+]\s*\*\*([^*]+?)\*\*\s*(?:[（(][^（）()]*[)）]\s*)*[:：]", str(raw))
+        if m:
+            existing_names.add(m.group(1).strip())
+    new_body, changed, used = [], False, set()
+    for raw in old_body:
+        line = raw
+        m = re.match(r"^(\s*[-*+]\s*\*\*([^*]+)\*\*\s*[:：]\s*)(.*)$", str(raw))
+        if m and _is_placeholder_line(raw):
+            name = m.group(2).strip()
+            val = _match_field(name, fields) or _match_field(name.replace(" ", ""), fields)
+            if val:
+                line = m.group(1) + val
+                changed = True
+                used.add(name)
+        new_body.append(line)
+    table_body, table_used = _fill_table_cells(old_body, ai_body)   # 先填空表格单元格
+    if table_body is not None:
+        new_body, changed = table_body, True
+        used |= table_used
+    extras = []
+    for raw in ai_body or []:
+        s = str(raw).strip()
+        if not s:
+            continue
+        fm = re.match(r"^\s*[-*+]?\s*\*\*\s*([^*]+?)\s*\*\*\s*[:：]", s)
+        plain = re.match(r"^([^：:]{1,16})\s*[:：]", s)
+        name = (fm or plain).group(1).strip() if (fm or plain) else ""
+        if name:
+            if name in existing_names or name in used:
+                continue                      # 小节里已有这个字段（如时间/地点），不重复追加
+            if any(len(n) >= 2 and (n in name or name in n) for n in existing_names | used):
+                continue
+        extras.append(s if s.startswith(("-", "*")) else "- " + s)
+    if extras:
+        new_body = new_body + ([""] if new_body and new_body[-1].strip() else []) + extras
+        changed = True
+    return new_body if changed else None
+
+
+def _as_bullets(lines: list) -> list:
+    """把应写成阶段列表的小节（如「生平简史」）统一成 `- **1881-1894**：…` 形式的条目。"""
+    out = []
+    for ln in lines:
+        s = str(ln).strip()
+        if not s:
+            continue
+        out.append(s if s.startswith(("-", "*")) else "- " + s)
+    return out
+
+
+
+def normalize_sections_input(sections):
+    """把外面可能写的几种 `sections` 形状，归一成内部形状 {norm: (label, [行…])}。
+
+    接受：
+      {名称: (标题, [行…])}   ← 内部形状，原样通过
+      {名称: [行…]}           ← 名称当小节标题（自动补 "## "）
+      {名称: "整段文本"}      ← 按行拆开
+      {名称: None} / {名称: []} ← 空小节（占位）
+    名称里已带 "## " 的不会重复补。其余形状抛 ValueError（中文提示 + 例子）。
+    """
+    if sections is None:
+        return OrderedDict()
+    if isinstance(sections, str):
+        raise ValueError("sections 形状不对：应为 {小节名: (标题, [行…])}、{小节名: [行…]} "
+                         "或 {小节名: \"整段文本\"}；收到的是 字符串")
+    try:
+        items = list(sections.items())
+    except Exception:
+        raise ValueError("sections 形状不对：应为 {小节名: (标题, [行…])}、{小节名: [行…]} "
+                         "或 {小节名: \"整段文本\"}；收到的是 " + type(sections).__name__)
+    out = OrderedDict()
+    for key, val in items:
+        name = str(key or "").strip()
+        if not name:
+            continue
+        label = name if name.startswith("#") else "## " + name
+        norm = section_clean_name(label)
+        if isinstance(val, tuple):
+            if len(val) != 2:
+                raise ValueError(f"小节「{name}」形状不对：元组应为 (标题, [行…])，收到 {len(val)} 项")
+            lab2, body = val[0], val[1]
+            lab2 = str(lab2 or name)      # 内部形状：标题**原样保留**（不擅自补 "## "，否则会被当成正文行）
+            if isinstance(body, str):
+                body = body.splitlines()
+            elif body is None:
+                body = []
+            elif not isinstance(body, (list, tuple)):
+                raise ValueError(f"小节「{name}」的正文形状不对：应为 [行…] 或字符串，收到 {type(body).__name__}")
+            out[str(key)] = (lab2, [str(x) for x in body])     # 内部形状：**原样保留原键**（重算会丢 emoji、导致模板对齐失败）
+        elif isinstance(val, str):
+            out[norm] = (label, val.splitlines())
+        elif isinstance(val, (list, tuple)):
+            out[norm] = (label, [str(x) for x in val])
+        elif val is None:
+            out[norm] = (label, [])
+        else:
+            raise ValueError(f"小节「{name}」形状不对：应为 (标题, [行…])、[行…] 或 \"整段文本\"；"
+                             f"收到 {type(val).__name__}")
+    return out
+
+def merge_sections(existing: OrderedDict, ai: OrderedDict, report: list[str]) -> OrderedDict:
+    """
+    把 AI 小节合并进现有小节：
+      * 已有小节：空 → 整段替换（AI 摘要把引用块占位替换为 AI 行）；有内容 → 保留跳过；
+        若小节内有子标题（###）且顶部无实质内容，AI 行插入为引言。
+      * 新小节：追加到末尾（若存在“参考资料”则插在其前）。
+    """
+    result = OrderedDict(existing)
+    for norm, (label, ai_body) in ai.items():
+        if not [x for x in (ai_body or []) if str(x).strip()]:
+            # AI 整节留空（模型保守）：明确记一行，界面会提示可重试
+            report.append(f"⚠ AI 未给内容：{label}（保留 TODO；可重试「AI 分析与抽取」）")
+            continue
+        if norm in result:
+            old = result[norm]
+            old_body = old[1]
+            if is_fillable(old_body):
+                # 「生平简史」按格式规范 §2.2 写成时间线阶段列表，AI 给成段落也转成条目
+                lines = _as_bullets(ai_body) if "生平简史" in section_clean_name(norm) else ai_body
+                result[norm] = [old[0], _wrap_ai_body(old_body, lines)]
+                report.append(f"正文填充：{label}")
+            else:
+                # 顶部无实质内容且有 ### 子标题 → AI 行作引言
+                sub = any(HEADER_RE.match(ln) and ln.startswith("### ") for ln in old_body)
+                if sub:
+                    intro_region = old_body[: _first_subheader_index(old_body)]
+                    if is_fillable(intro_region):
+                        new_body = _wrap_ai_body(intro_region, ai_body) + old_body[_first_subheader_index(old_body):]
+                        result[norm] = [old[0], new_body]
+                        report.append(f"正文引言填充：{label}")
+                        continue
+                # 表单式小节（时间/地点已自动填，还留着空字段）：按字段名补空
+                filled = _fill_empty_fields(old_body, ai_body)
+                if filled is not None:
+                    result[norm] = [old[0], filled]
+                    report.append(f"正文填空（字段级）：{label}")
+                else:
+                    report.append(f"正文保留已有：{label}")
+        else:
+            # 追加：插到「参考资料」之前，否则末尾
+            # 注意：emoji 模板里是 `## 📚 参考资料`，header_norm 会带上 emoji，
+            # 所以这里按「去掉 emoji/序号后的中文名」来认，否则新小节会掉到页脚后面。
+            ref_idx = next((i for i, nm in enumerate(result.keys())
+                            if "参考资料" in section_clean_name(nm)), None)
+            if ref_idx is not None:
+                items = list(result.items())
+                items.insert(ref_idx, (norm, [label, ai_body]))
+                result = OrderedDict(items)
+            else:
+                result[norm] = [label, ai_body]
+            report.append(f"新增小节：{label}")
+    return result
+
+
+def _first_subheader_index(body: list[str]) -> int:
+    for i, ln in enumerate(body):
+        if HEADER_RE.match(ln):
+            return i
+    return len(body)
+
+
+def _wrap_ai_body(old_body: list[str], ai_body: list[str]) -> list[str]:
+    """若原小节是引用块占位（> …），AI 行也按引用块排版；否则直接用 AI 行。"""
+    had_blockquote = any(ln.strip().startswith(">") for ln in old_body)
+    clean = [ln for ln in ai_body if ln.strip()]
+    if had_blockquote:
+        return [f"> {ln}" if not ln.startswith(">") else ln for ln in clean]
+    return clean if clean else old_body
+
+
+# ---------------------------------------------------------------------------
+# 格式规范（Templates（模板）/格式规范.md）支持
+#   * Templater 模板（开头 <%* %> 收集块 + 正文 <% %> 表达式）直接渲染成笔记骨架，
+#     提示块本身绝不写进笔记（格式规范 §0.2 的「占位符卡在笔记里」陷阱）；
+#   * frontmatter 只允许英文键名、禁止 [[ ]]；正文只有一个 H1 + emoji 章节；
+#   * 空位统一写 <!-- TODO: 待补 -->；结尾固定 --- + **关联**：…。
+# ---------------------------------------------------------------------------
+
+TODO_TEXT = "<!-- TODO: 待补 -->"
+HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+TPL_PROMPT_BLOCK_RE = re.compile(r"<%\*(.*?)%>", re.S)
+TPL_EXPR_RE = re.compile(r"<%\s*(.+?)\s*%>", re.S)
+TPL_PROMPT_DECL_RE = re.compile(
+    r'const\s+([^\s=]+)\s*=\s*await\s+tp\.system\.prompt\(\s*"((?:[^"\\]|\\.)*)"'
+    r"\s*(?:,\s*([^)]*?)\s*)?\)\s*(?:\|\|\s*\"\")?\s*;"
+)
+TPL_APPEND_RE = re.compile(r"tR\s*\+=\s*(.+?);\s*(?=\n|$)")
+# Templater 的 suggester（下拉/建议选择器）：
+#   const 分期 = await tp.system.suggester(["晚清（1881—1911）", …], ["晚清", …], false, "历史分期")
+#   第一个数组是显示文本，第二个（可选）是真正写进 frontmatter 的值 → 取第二个当允许取值。
+TPL_SUGGESTER_DECL_RE = re.compile(
+    r'const\s+([^\s=]+)\s*=\s*await\s+tp\.system\.suggester\(\s*(\[[^\]]*\])\s*,?\s*(\[[^\]]*\])?'
+    r'([^;]*?)\)\s*(?:\|\|\s*"")?\s*;', re.S)
+# frontmatter 拼装行：tR += "phase: " + 历史分期  →  变量「历史分期」写进 key「phase」
+TPL_TR_KEY_RE = re.compile(r'tR\s*\+=\s*"([A-Za-z_][\w\-]*)\s*:\s*"\s*\+\s*([^\s;+)]+)')
+
+
+def _array_strings(literal: str) -> list:
+    """从 JS 数组字面量里取出字符串项（["a", 'b'] → ['a','b']）。"""
+    return [m.group(1) if m.group(1) is not None else m.group(2)
+            for m in re.finditer(r'"((?:[^"\\]|\\.)*)"|\'((?:[^\'\\]|\\.)*)\'', literal or "")]
+
+# frontmatter 中文别名 → 规范英文键（格式规范 §1 总则第 1 条）
+FIELD_ALIASES = {
+    "姓名": "title", "名称": "title", "标题": "title", "条目": "title",
+    "条约": "title", "文献": "title", "派系": "title", "院校": "title",
+    "时期": "period", "年代": "period", "历史时期": "period", "核心时期": "period", "era": "period",
+    "重要性": "importance", "历史重要性": "importance",
+    "年份": "year",
+    "出生年": "born", "生年": "born", "出生": "born",
+    "逝世年": "died", "卒年": "died", "逝世": "died",
+    "日期": "date", "时间": "date",
+    "地点": "locations", "位置": "locations", "地区": "locations",
+    "人物": "people", "相关人物": "people", "核心人物": "people", "关联人物": "people",
+    "事件": "events", "相关事件": "events", "关联事件": "events",
+    "组织": "organizations", "关联组织": "organizations", "组织列表": "organizations",
+    "前置事件": "prev_events", "后续事件": "next_events",
+    "前置战役": "prev_events", "后续战役": "next_events",
+    "标签": "tags", "标签列表": "tags",
+}
+LIST_FIELDS = {"aliases", "locations", "people", "events", "organizations",
+               "prev_events", "next_events", "tags", "sources", "references"}
+FIELD_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")     # 合规的 frontmatter 键（§1-1）
+# 由模板/程序决定、AI 不得覆盖的字段
+PROTECTED_FIELDS = {"title", "aliases", "type", "tags"}
+
+PLACEHOLDER_TEXT = re.compile(r"^(用一段话|概括|为什么|TODO|待补充|待补)")
+
+_JS_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "'": "'", "\\": "\\"}
+_JS_OPS = ("===", "!==", "==", "!=", "&&", "||", "?", ":", "+", "(", ")", "[", "]", ",", ".")
+
+
+class TemplateExprError(ValueError):
+    """模板表达式超出可安全求值的子集（如 tp.* 函数调用）。"""
+
+
+def _js_tokens(expr: str) -> list:
+    tokens: list = []
+    i, n = 0, len(expr)
+    while i < n:
+        ch = expr[i]
+        if ch.isspace():
+            i += 1
+            continue
+        if ch in "\"'":
+            quote, i, buf = ch, i + 1, []
+            while i < n and expr[i] != quote:
+                if expr[i] == "\\" and i + 1 < n:
+                    buf.append(_JS_ESCAPES.get(expr[i + 1], expr[i + 1]))
+                    i += 2
+                    continue
+                buf.append(expr[i])
+                i += 1
+            if i >= n:
+                raise TemplateExprError("字符串缺少结束引号")
+            i += 1
+            tokens.append(("str", "".join(buf)))
+            continue
+        if ch.isdigit():
+            j = i
+            while j < n and (expr[j].isdigit() or expr[j] == "."):
+                j += 1
+            tokens.append(("num", expr[i:j]))
+            i = j
+            continue
+        if ch.isalpha() or ch == "_" or ord(ch) > 127:
+            j = i
+            while j < n and (expr[j].isalnum() or expr[j] in "_$" or ord(expr[j]) > 127):
+                j += 1
+            tokens.append(("ident", expr[i:j]))
+            i = j
+            continue
+        for op in _JS_OPS:
+            if expr.startswith(op, i):
+                tokens.append(("op", op))
+                i += len(op)
+                break
+        else:
+            raise TemplateExprError(f"无法解析的字符 {ch!r}")
+    return tokens
+
+
+def _truthy(val) -> bool:
+    s = "" if val is None else str(val).strip()
+    return s not in ("", "0", "false", "null", "undefined", "NaN")
+
+
+def _is_number(val) -> bool:
+    try:
+        float(str(val).strip())
+        return str(val).strip() != ""
+    except (TypeError, ValueError):
+        return False
+
+
+class _JsParser:
+    """模板用到的 JS 子集：字符串/数字/标识符、+ 拼接、?: 三元、|| 与 &&、括号。"""
+
+    def __init__(self, tokens: list, values: dict):
+        self.toks = tokens
+        self.pos = 0
+        self.values = values
+
+    def _peek(self):
+        return self.toks[self.pos] if self.pos < len(self.toks) else (None, None)
+
+    def _take(self, op: str) -> bool:
+        kind, val = self._peek()
+        if kind == "op" and val == op:
+            self.pos += 1
+            return True
+        return False
+
+    def parse(self) -> str:
+        val = self._ternary()
+        if self.pos != len(self.toks):
+            raise TemplateExprError("表达式未被完整解析")
+        return val
+
+    def _ternary(self) -> str:
+        cond = self._or()
+        if self._take("?"):
+            a = self._ternary()
+            if not self._take(":"):
+                raise TemplateExprError("三元表达式缺少 :")
+            b = self._ternary()
+            return a if _truthy(cond) else b
+        return cond
+
+    def _or(self) -> str:
+        val = self._and()
+        while self._take("||"):
+            rhs = self._and()
+            val = val if _truthy(val) else rhs
+        return val
+
+    def _and(self) -> str:
+        val = self._add()
+        while self._take("&&"):
+            rhs = self._add()
+            val = rhs if _truthy(val) else val
+        return val
+
+    def _add(self) -> str:
+        val = self._unary()
+        while self._take("+"):
+            rhs = self._unary()
+            if _is_number(val) and _is_number(rhs):
+                num = float(val) + float(rhs)
+                val = str(int(num)) if num == int(num) else str(num)
+            else:
+                val = ("" if val is None else str(val)) + ("" if rhs is None else str(rhs))
+        return val
+
+    def _unary(self) -> str:
+        kind, val = self._peek()
+        if kind in ("str", "num"):
+            self.pos += 1
+            return val or ""
+        if kind == "ident":
+            self.pos += 1
+            if self._peek() == ("op", "("):
+                raise TemplateExprError(f"不支持函数调用 {val}(…)")
+            if self._take("."):
+                raise TemplateExprError(f"不支持属性访问 {val}.…")
+            return self.values.get(val, "")
+        if self._take("("):
+            inner = self._ternary()
+            if not self._take(")"):
+                raise TemplateExprError("括号未闭合")
+            return inner
+        if self._take("["):
+            raise TemplateExprError("不支持数组字面量")
+        raise TemplateExprError("不支持该表达式")
+
+
+def _eval_js(expr: str, values: dict) -> str:
+    """求值模板表达式（只支持安全子集），失败抛 TemplateExprError。"""
+    return _JsParser(_js_tokens(expr), values or {}).parse()
+
+
+def parse_template(text: str) -> dict:
+    """解析模板：{templater, prompts:[{var,label,default,options?}], body, field_keys, options}。
+
+    * prompt 与 suggester 都算提示项（suggester 额外带 options 可选值）；
+    * field_keys: {模板变量 → frontmatter 键}（从 `tR += "phase: " + 历史分期` 这类行解析），
+      这样「历史分期」这类新变量才能被 AI 的 phase 值填上、并告诉 AI 允许的取值。
+    """
+    block = TPL_PROMPT_BLOCK_RE.search(text)
+    prompts: list = []
+    options: dict = {}
+    if block:
+        src = block.group(1)
+        found: list = []
+        for m in TPL_PROMPT_DECL_RE.finditer(src):
+            var, label, default = m.group(1), m.group(2), (m.group(3) or "").strip()
+            if "tp.file.title" in default:
+                default = ""
+            elif len(default) >= 2 and default[0] in "\"'" and default[-1] == default[0]:
+                default = default[1:-1]
+            found.append((m.start(), {"var": var, "label": label, "default": default}))
+        for m in TPL_SUGGESTER_DECL_RE.finditer(src):
+            var = m.group(1)
+            display = _array_strings(m.group(2))
+            values = _array_strings(m.group(3)) if m.group(3) else display
+            tail = m.group(4) or ""
+            quoted = re.findall(r'"([^"]{1,40})"', tail)
+            item = {"var": var, "label": (quoted[-1] if quoted else var), "default": "",
+                    "options": values, "display": display, "kind": "suggester"}
+            if values:
+                options[var] = values
+            found.append((m.start(), item))
+        prompts = [item for _pos, item in sorted(found, key=lambda x: x[0])]
+    body = TPL_PROMPT_BLOCK_RE.sub("", text, count=1) if block else text
+    body = re.sub(r"^\s*_%>\s*\n?", "", body.lstrip("\n"))
+    templater = bool(block) or bool(TPL_EXPR_RE.search(text))
+    field_keys = {var: key for key, var in TPL_TR_KEY_RE.findall(text)}
+    return {"templater": templater, "prompts": prompts, "body": body,
+            "field_keys": field_keys, "options": options}
+
+
+def _render_expr(expr: str, values: dict, report: list) -> str:
+    expr = expr.strip()
+    if expr.startswith("tp."):
+        report.append("正文里还有 tp.system.prompt（格式规范 §0.2 反例）：已改为 TODO 占位")
+        return TODO_TEXT
+    try:
+        val = _eval_js(expr, values)
+    except TemplateExprError as exc:
+        report.append(f"模板表达式无法求值，已用 TODO 占位：{expr[:40]}（{exc}）")
+        return TODO_TEXT
+    text_val = "" if val is None else str(val)
+    if text_val.strip():
+        return text_val
+    if '""' in expr:
+        return ""            # 模板自己用空串兜底（如「肖像可留空」）→ 保持空行，不塞 TODO
+    return TODO_TEXT
+
+
+def render_template(text: str, values: dict, report: list | None = None) -> tuple[dict, str, list]:
+    """把 Templater 模板渲染成 (frontmatter 字段, 正文, 提示项列表)。
+
+    frontmatter 由模板里的 `tR += "…"` 逐行拼出（格式规范 §0.2 要点 3），
+    正文里的 `<% 表达式 %>` 逐个求值，取不到值就落 <!-- TODO: 待补 -->。
+    """
+    report = report if report is not None else []
+    parsed = parse_template(text)
+    fm_lines: list = []
+    for m in TPL_APPEND_RE.finditer(text):
+        expr = m.group(1).strip()
+        try:
+            fm_lines.append(_eval_js(expr, values))
+        except TemplateExprError as exc:
+            report.append(f"模板 frontmatter 表达式跳过：{expr[:40]}（{exc}）")
+    fields: dict = {}
+    fm_text = "".join(fm_lines).split("\n")
+    if fm_text and fm_text[0].strip() == "---":
+        end = next((i for i in range(1, len(fm_text)) if fm_text[i].strip() == "---"), None)
+        if end is not None:
+            fields = parse_simple_yaml("\n".join(fm_text[1:end]))
+    body = TPL_EXPR_RE.sub(lambda m: _render_expr(m.group(1), values, report), parsed["body"])
+    body = TPL_EXPR_RE.sub("", body)
+    return fields, body, parsed["prompts"]
+
+
+def strip_wiki_links(value):
+    """frontmatter 禁止 [[ ]]（格式规范 §1 总则第 2 条）：把 [[X]] / [[X|Y]] 还原成纯文本。"""
+    if isinstance(value, list):
+        return [strip_wiki_links(v) for v in value]
+    return re.sub(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]", r"\1", str(value)).strip()
+
+
+def canonicalize_fields(fields: dict, report: list | None = None) -> OrderedDict:
+    """frontmatter 规范化：中文键 → 英文键；去掉值里的 [[ ]]；列表字段统一为列表。"""
+    report = report if report is not None else []
+    out: OrderedDict = OrderedDict()
+    for key, val in (fields or {}).items():
+        name = str(key).strip()
+        if not name:
+            continue
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            eng = name
+        else:
+            eng = FIELD_ALIASES.get(name)
+            if eng is None:
+                report.append(f"frontmatter 非英文键无法映射，按原样保留：{name}")
+                eng = name
+            else:
+                report.append(f"frontmatter 键规范化：{name} → {eng}")
+        val = strip_wiki_links(val)
+        if eng in LIST_FIELDS:
+            if isinstance(val, list):
+                items = [str(x).strip() for x in val if str(x).strip()]
+            else:
+                text = str(val).strip()
+                items = [] if text in ("", "[]") else split_list_value(text)
+            if isinstance(out.get(eng), list):
+                out[eng] = out[eng] + items
+            else:
+                out[eng] = items
+        else:
+            if isinstance(val, list):
+                val = "、".join(str(x).strip() for x in val if str(x).strip())
+            out[eng] = val
+    return out
+
+
+def _first_value(val) -> str:
+    if isinstance(val, list):
+        return str(val[0]).strip() if val else ""
+    return str(val).strip() if val is not None else ""
+
+
+def build_template_values(type_: str, title: str, summary: str,
+                          ai_fields: dict, prompt_items: list | None = None,
+                          field_keys: dict | None = None) -> dict:
+    """模板变量 → 值：标题/摘要/年份 + AI 字段（中文或英文键都认）+ 模板里的默认值。
+
+    field_keys 是「模板变量 → frontmatter 键」映射（如 历史分期 → phase），
+    这样模板新增的变量（含 suggester）也能拿到 AI 给的值。
+    """
+    ai = canonicalize_fields(ai_fields or {})
+    year = ""
+    m = re.search(r"(\d{4})", title or "")
+    if m:
+        year = m.group(1)
+    year = year or str(ai.get("year") or "")
+    vals = {
+        "title": title, "标题": title, "名称": title, "姓名": title,
+        "事件名称": title, "人物姓名": title, "简称": title, "别名": title, "generic_type": type_,
+        "type": type_, "类型": type_,
+        "summary": summary, "一句话": summary, "摘要": summary,
+        "year": year, "年份": year,
+        "period": str(ai.get("period") or ""), "时期": str(ai.get("period") or ""),
+        "importance": str(ai.get("importance") or ""), "重要性": str(ai.get("importance") or ""),
+        "date": str(ai.get("date") or ""), "日期": str(ai.get("date") or ""), "时间": str(ai.get("date") or ""),
+        "born": str(ai.get("born") or ""), "出生年": str(ai.get("born") or ""),
+        "died": str(ai.get("died") or ""), "逝世年": str(ai.get("died") or ""),
+        "locations": _first_value(ai.get("locations")), "地点": _first_value(ai.get("locations")),
+        "people": _first_value(ai.get("people")), "人物": _first_value(ai.get("people")),
+        "events": _first_value(ai.get("events")), "事件": _first_value(ai.get("events")),
+        "organizations": _first_value(ai.get("organizations")), "组织": _first_value(ai.get("organizations")),
+    }
+    for key, val in (ai_fields or {}).items():          # 模板自定义变量（字号/籍贯/身份…）原样透传
+        vals.setdefault(str(key).strip(), _first_value(val))
+    for var, key in (field_keys or {}).items():          # 模板变量 ← 对应英文键的 AI 值
+        if not vals.get(var):
+            v = ai.get(key, ai_fields.get(key) if isinstance(ai_fields, dict) else None)
+            if v not in (None, "", []):
+                vals[var] = _first_value(v)
+    for item in (prompt_items or []):                    # 没给值就用提示里的默认值（如 重要性 "3"）
+        var = item.get("var")
+        if var and not vals.get(var) and item.get("default"):
+            vals[var] = item["default"]
+    return vals
+
+
+def _best_section_match(norm: str, template_norms: list) -> str | None:
+    """小节名对齐：先忽略序号/emoji 精确匹配，再取包含关系里最长的那个。"""
+    clean = section_clean_name(norm)
+    if not clean:
+        return None
+    exact = [t for t in template_norms if section_clean_name(t) == clean]
+    if exact:
+        return exact[0]
+    partial = [t for t in template_norms
+               if clean in section_clean_name(t) or section_clean_name(t) in clean]
+    if not partial:
+        return None
+    return max(partial, key=lambda t: len(section_clean_name(t)))
+
+
+def align_sections(sections: OrderedDict, template_sections: OrderedDict) -> OrderedDict:
+    """把 '三、事件经过' / '事件经过' 这类小节名对齐到模板的 '📅 事件经过'。"""
+    if not sections or not template_sections:
+        return sections
+    norms = list(template_sections.keys())
+    out: OrderedDict = OrderedDict()
+    for norm, value in sections.items():
+        target = norm if norm in template_sections else _best_section_match(norm, norms)
+        if target is None:
+            out.setdefault(norm, value)
+            continue
+        if target in out:
+            out[target][1].extend(value[1])
+            continue
+        out[target] = [template_sections[target][0], list(value[1])]
+    return out
+
+
+def template_skeleton(cfg: dict, type_: str) -> str:
+    """模板渲染成「空值骨架」（供 AI 提示词 / 预览用）：没有提示块，空位全是 TODO。"""
+    text, _note = load_template_text(cfg, type_)
+    _parsed = parse_template(text)
+    values = build_template_values(type_, "（标题）", "", {}, _parsed["prompts"],
+                                  _parsed.get("field_keys"))
+    if parse_template(text)["templater"]:
+        fields, body, _ = render_template(text, values, [])
+        fields = canonicalize_fields(fields)
+        return "---\n" + serialize_simple_yaml(fields) + "\n---\n\n" + normalize_note_body(body, "")
+    for key in ("{{title}}", "{{summary}}", "{{era}}", "{{importance}}", "{{year}}", "{{generic_type}}", "{{date}}"):
+        text = text.replace(key, "")
+    return text
+
+
+def normalize_note_body(body: str, title: str = "", report: list | None = None,
+                        footer: list | None = None) -> str:
+    """按格式规范整理正文：唯一 H1、标题前后空行、空位写 TODO、结尾固定页脚。
+
+    footer 形如 ["---", "", "**关联**：…"]：正文里已有页脚就保留正文的，
+    没有就补上它（格式规范 §1 第 11 条）。
+    """
+    report = report if report is not None else []
+    lines = [ln.rstrip() for ln in (body or "").replace("\r\n", "\n").split("\n")]
+
+    found: list = []
+    for i in range(len(lines) - 1, -1, -1):
+        if lines[i].strip().startswith(("**关联**", "**关联模块**")):
+            line = lines[i].strip().replace("**关联模块**", "**关联**")
+            j = i - 1
+            while j >= 0 and not lines[j].strip():
+                j -= 1
+            tail = [ln for ln in lines[i + 1:] if ln.strip()]      # 页脚之后的内容不能丢
+            lines = lines[:j] if (j >= 0 and lines[j].strip() == "---") else lines[:i]
+            if tail:
+                lines = lines + [""] + tail
+                report.append("新小节已放在关联页脚之前")
+            found = ["---", line]                 # --- 紧贴 **关联**（§1-11）
+            break
+    footer = found or list(footer or [])
+    if not found and footer:
+        report.append("格式修正：补上 关联 页脚")
+
+    h1 = [i for i, ln in enumerate(lines) if re.match(r"^#\s+\S", ln)]
+    if not h1:
+        if title:
+            lines = [f"# {title}", ""] + lines
+    else:
+        for i in reversed(h1[1:]):
+            lines[i] = re.sub(r"^#\s+", "## ", lines[i])
+            report.append("格式修正：多余 H1 已降级为 H2")
+
+    out: list = []
+    for ln in lines:
+        s = ln.strip()
+        if DISPUTE_MARK in s:                      # §1-12：统一成「两个空格 + > ⚖️ 争议说明：…｜来源：…」
+            probe = re.sub(r"^[-*+]\s*(?:>\s*)?", "", s)
+            probe = re.sub(r"^>\s*", "", probe)
+            if probe.startswith(DISPUTE_MARK):
+                ln, s = "  > " + probe, "> " + probe
+        if s in ("-", "*", "- [[]]", "-[[]]", "* [[]]", "- [[]] "):
+            ln, s = "- " + TODO_TEXT, "- " + TODO_TEXT
+        if "<%" in ln:
+            ln = re.sub(r"<%\*.*?%>", "", ln, flags=re.S)
+            ln = TPL_EXPR_RE.sub(lambda m: _render_expr(m.group(1), {}, report), ln)
+            s = ln.strip()
+            report.append("格式修正：清理了未渲染的模板表达式")
+        if not s:
+            if out and out[-1] == "":
+                continue
+            out.append("")
+            continue
+        if s.startswith("#"):
+            if out and out[-1] != "":
+                out.append("")
+            out.append(ln)
+            out.append("")
+            continue
+        if s.startswith(("- ", "* ")) and out and out[-1] != "" and not out[-1].lstrip().startswith(("- ", "* ")):
+            out.append("")
+        out.append(ln)
+
+    body_text = "\n".join(out).strip("\n")
+    if footer:
+        body_text = body_text.rstrip("\n") + "\n\n" + "\n".join(footer) + "\n"
+    return body_text
+
+
+# ---------------------------------------------------------------------------
+# 笔记创建 / 增量更新
+# ---------------------------------------------------------------------------
+
+def _finalize_fields(fields: dict, type_: str, title: str, report: list) -> OrderedDict:
+    """收尾 frontmatter：标题/别名对齐笔记名，补齐 type / importance / tags（英文键）。"""
+    fields = canonicalize_fields(fields, report)
+    out: OrderedDict = OrderedDict()
+    out["title"] = title
+    aliases = fields.get("aliases")
+    if isinstance(aliases, list):
+        items = [str(x).strip() for x in aliases if str(x).strip()]
+    else:
+        items = [str(aliases).strip()] if str(aliases or "").strip() else []
+    if title and title not in items:
+        items.insert(0, title)
+    out["aliases"] = items[:3]
+    out["type"] = type_ or str(fields.get("type") or "").strip()   # 以"该库的路由类型名"为准
+    for key, val in fields.items():
+        if key in ("title", "aliases", "type"):
+            continue
+        out[key] = val
+    if not out.get("tags"):
+        out["tags"] = ["历史", "中国近代史", "民国史", type_]
+    return out
+
+
+def _insert_before_tags(fields: OrderedDict, key: str, value) -> OrderedDict:
+    """把字段插到 tags 之前，保持 frontmatter 的常规顺序。"""
+    if key in fields:
+        fields[key] = value
+        return fields
+    out: OrderedDict = OrderedDict()
+    inserted = False
+    for k, v in fields.items():
+        if k == "tags" and not inserted:
+            out[key] = value
+            inserted = True
+        out[k] = v
+    if not inserted:
+        out[key] = value
+    return out
+
+
+def footer_link_name(dir_name: str) -> str:
+    """目录名 → 模块笔记名（页脚链接用）：`12 事件数据库 ⭐` → `12事件数据库`。
+
+    知识库里的模块索引笔记就放在模块目录内、用这个名字（例如
+    `04 军队与军事院校/04军队与军事院校.md`），所以页脚要按这个习惯写链接。
+    """
+    s = str(dir_name or "").strip()
+    s = re.sub(r"^(\d{1,3})\s+", r"\1", s)          # 去掉编号后的空格
+    s = re.sub(r"\s*[⭐★]+\s*$", "", s)              # 去掉 ⭐
+    return s.strip()
+
+
+FOOTER_RELATED_TYPES = {
+    # 模板没写页脚时，按这张"关联类型"表 + 当前知识库 routes 生成页脚（§1-11）。
+    "时间线": ("时间线", "人物", "派系", "事件"),
+    "人物": ("人物", "派系", "事件"),
+    "派系": ("时间线", "人物", "派系", "军队"),
+    "军队": ("军队", "时间线", "战役"),
+    "国民党": ("国民党", "时间线", "人物", "事件"),
+    "共产党": ("共产党", "时间线", "人物", "事件"),
+    "制度": ("制度", "时间线", "人物"),
+    "地区": ("地区", "时间线", "派系"),
+    "国际势力": ("国际势力", "时间线", "条约"),
+    "条约": ("条约", "时间线", "国际势力"),
+    "事件": ("事件", "时间线", "人物", "派系"),
+    "战役": ("战役", "时间线", "军队"),
+    "史料": ("史料", "事件", "条约"),
+    "专题": ("专题", "时间线", "人物", "派系"),
+    "帝王": ("帝王", "朝代", "时间线"),
+    "朝代": ("朝代", "帝王", "时间线"),
+    "政权": ("政权", "战争", "人物"),
+    "战争": ("战争", "政权", "人物", "军队"),
+    "地理": ("地理", "政权", "时间线"),
+    "经济": ("经济", "制度", "时间线"),
+    "考古": ("考古", "出土文献", "朝代"),
+    "职官": ("职官", "制度", "人物"),
+    "法律": ("法律", "制度", "时间线"),
+    "年号": ("年号", "帝王", "朝代"),
+    "民族与族群": ("民族与族群", "政权", "战争"),
+    "出土文献": ("出土文献", "考古", "史料"),
+    "争议": ("争议", "史料"),
+    "重大工程": ("重大工程", "地理", "经济"),
+    "传世典籍": ("传世典籍", "史料", "思想流派"),
+    "思想流派": ("思想流派", "传世典籍", "人物"),
+    "官署与机构": ("官署与机构", "职官", "制度"),
+}
+
+
+def template_footer(cfg: dict, type_: str) -> list:
+    """取 `---` + `**关联**：…`：模板写了用模板的，没写就按格式规范兜底。
+
+    格式规范 §1 第 11 条要求文件末尾固定为 `---` + `**关联**：…`；知识库里有几个
+    模板（国民党全史 / 国家制度与财政 / 战役数据库 …）自己漏了页脚，这里补齐。
+    """
+    try:
+        skeleton = template_skeleton(cfg, type_)
+    except Exception:
+        skeleton = ""
+    routes = cfg.get("routes") or {}
+    dir_values = {str(v) for v in routes.values()}
+    for line in reversed([ln.strip() for ln in skeleton.splitlines()]):
+        if line.startswith(("**关联**", "**关联模块**")):
+            raw = line.replace("**关联模块**", "**关联**")
+            links = re.findall(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]", raw)
+            conv: list = []
+            for target in links:                       # 模板里写死的目录名 → 翻译成当前库实际目录名
+                t = type_from_dir_name(target)
+                d = str(routes.get(t) or "").strip()
+                if not d and target in dir_values:
+                    d = target
+                name = footer_link_name(d) if d else ""
+                if name and name not in conv:
+                    conv.append(name)
+            if conv:
+                return ["---", "**关联**：" + " | ".join(f"[[{d}]]" for d in conv)]
+            break                                      # 模板页脚在当前库里一个都解析不了 → 走下面兜底
+    # 模板没写页脚 / 页脚解析不出来 → **按当前知识库的映射关系**生成；
+    # 一个关联类型都没有映射时**不加页脚**（不再回退任何内置常量）。
+    conv = []
+    for t in (FOOTER_RELATED_TYPES.get(type_) or (type_,)):
+        d = str(routes.get(t) or "").strip()
+        name = footer_link_name(d)
+        if name and name not in conv:
+            conv.append(name)
+    if not conv:
+        return []
+    return ["---", "**关联**：" + " | ".join(f"[[{n}]]" for n in conv)]
+
+
+
+def _has_bare_dispute(text: str) -> bool:
+    """正文里出现"存在争议/说法不一…"但**不在** ⚖️ 争议说明引用块内时，才提醒作者补说明。"""
+    keys = ("存在争议", "说法不一", "尚有争议", "存疑")
+    lines = str(text or "").splitlines()
+    for i, ln in enumerate(lines):
+        if not any(k in ln for k in keys):
+            continue
+        j = i
+        while j >= 0 and lines[j].lstrip().startswith(">"):
+            if DISPUTE_MARK in lines[j]:
+                break
+            j -= 1
+        else:
+            if not (j >= 0 and lines[j].lstrip().startswith(">") and DISPUTE_MARK in lines[j]):
+                return True
+            continue
+        if not (j >= 0 and DISPUTE_MARK in lines[j]):
+            return True
+    return False
+
+
+def build_note_text(cfg: dict, type_: str, title: str, summary: str,
+                    ai_fields: dict, ai_sections: OrderedDict,
+                    report: list[str] | None = None,
+                    images: list | None = None, auto_images: bool = True) -> tuple[str, str]:
+    """
+    按模板生成（或合并生成）笔记。返回 (最终文本, 状态说明)。
+
+    模板是 Templater 版（格式规范 §0）时直接渲染：提示块不进笔记，frontmatter 由模板的
+    `tR +=` 行拼出，正文 `<% 表达式 %>` 逐个求值，取不到就落 <!-- TODO: 待补 -->。
+    用户自写的旧式 {{占位符}} 模板继续支持。
+    """
+    ai_sections = normalize_sections_input(ai_sections)
+    report = report if report is not None else []
+    type_, alias_note = resolve_type_alias(cfg, type_)      # AI 给的「历史人物」这类说法先归并
+    if alias_note:
+        report.append(alias_note)
+    template_text, note = load_template_text(cfg, type_)
+    if not str(template_text or "").strip():
+        # 用户没有提供模板（也没有选模板文件夹）→ 明确失败，**不用任何内置模板兜底**
+        return "", (note or TEMPLATE_MISSING_HINT.format(t=type_))
+    parsed = parse_template(template_text)
+
+    if parsed["templater"]:
+        values = build_template_values(type_, title, summary, ai_fields, parsed["prompts"],
+                                      parsed.get("field_keys"))
+        fields, body, _prompts = render_template(template_text, values, report)
+    else:
+        values = build_template_values(type_, title, summary, ai_fields, [], parsed.get("field_keys"))
+        text = TPL_PROMPT_BLOCK_RE.sub("", template_text, count=1)
+        legacy = {
+            "{{title}}": title,
+            "{{summary}}": summary or "",
+            "{{era}}": values["period"],
+            "{{importance}}": values["importance"] or "-",
+            "{{year}}": values["year"],
+            "{{generic_type}}": type_,
+            "{{date}}": values["date"] or datetime.now().strftime("%Y-%m-%d"),
+        }
+        for key, val in legacy.items():
+            text = text.replace(key, val)
+        for placeholder in set(re.findall(r"\{\{[^}]*\}\}", text)):
+            text = text.replace(placeholder, str(values.get(placeholder[2:-2].strip(), "")))
+        fields, body = split_frontmatter(text)
+        if fields is None:
+            fields, body = {}, text
+
+    fields = _finalize_fields(fields, type_, title, report)
+    # 新字段只接受英文键（格式规范 §1-1）：模板提示变量里像「籍贯/身份/字号」这类没有英文键
+    # 对应的，已经渲染进正文，不会再被当成 frontmatter 字段塞回来；有对应英文键的（时间→date、
+    # 出生年→born…）照常合并填空。
+    ai_src = {k: v for k, v in (ai_fields or {}).items()
+              if str(k).strip() not in ("类型", "type", "标签", "tags")}
+    ai_en = OrderedDict((k, v) for k, v in canonicalize_fields(ai_src, report).items()
+                        if FIELD_KEY_RE.match(str(k)) and k not in PROTECTED_FIELDS)
+    fields = update_frontmatter(fields, ai_en, report)
+    if not str(fields.get("importance") or "").strip():       # 默认值放在合并之后，别挡住 AI 的判断
+        fields = _insert_before_tags(fields, "importance", "3")
+
+    template_sections = parse_sections(body)
+    merged = merge_sections(template_sections, align_sections(ai_sections, template_sections), report)
+    body_text = normalize_note_body(build_body(merged), title, report, template_footer(cfg, type_))
+    lead = str(summary or "").strip()
+    if lead and lead[:24] not in body_text:               # 模板没有对应小节时，首段作为导语保留（不丢内容）
+        m_h1 = re.search(r"^#\s+.*$", body_text, re.M)
+        if m_h1:
+            body_text = (body_text[:m_h1.end()] + "\n\n" + lead + "\n\n"
+                         + body_text[m_h1.end():].lstrip("\n"))
+        else:
+            body_text = lead + "\n\n" + body_text
+        report.append("正文首段已作为导语保留在 H1 之后（模板没有对应小节）")
+    dispute_lines = [ln for ln in body_text.splitlines() if DISPUTE_MARK in ln]
+    if dispute_lines:
+        with_src = sum(1 for ln in dispute_lines if "来源" in ln)
+        without = len(dispute_lines) - with_src
+        msg = f"争议说明：{len(dispute_lines)} 处（已带「｜来源：」{with_src} 处"
+        msg += f"，缺来源 {without} 处 —— 请补出处，程序不会代写）" if without else "）"
+        report.append(msg)
+    elif _has_bare_dispute(body_text):
+        report.append("⚠ 正文提到“争议/说法不一”但没有按规范附「> ⚖️ 争议说明：…｜来源：…」，"
+                      "建议补上（所有词条都适用）")
+    text = "---\n" + serialize_simple_yaml(fields) + "\n---\n\n" + body_text
+    entries = _image_entries(cfg, title, fields, images, auto_images)   # 配图（本地图库优先）
+    if entries:
+        text = insert_images(text, entries)
+        report.append("配图：" + "、".join(str(e.get("file")) for e in entries))
+    return text, note
+
+
+def find_note_paths(cfg: dict, title: str) -> list:
+    """在知识库里按文件名找同名词条（跳过模板/附件目录）。"""
+    kb = resolve_kb(cfg)
+    if kb is None:
+        return []
+    name = sanitize_title(title)
+    out = []
+    for p in kb.rglob(f"{name}.md"):
+        if _is_skipped_path(p):
+            continue
+        out.append(p)
+    return out
+
+
+def _split_preamble(body: str) -> tuple:
+    """把「第一个 `##`/`###` 之前」的内容（H1 + 引言段落）与其余正文分开。
+
+    合并/整理时如果不带上它，H1 与引言就会在重建正文时被丢掉（真丢内容）。
+    返回 (前导行列表, 其余正文字符串)。
+    """
+    lines = (body or "").splitlines()
+    for i, ln in enumerate(lines):
+        if re.match(r"^#{2,6}\s+\S", ln.strip()):
+            return lines[:i], "\n".join(lines[i:])
+    return lines, ""
+
+
+def merge_into_existing(cfg: dict, target: Path, type_: str, title: str,
+                        ai_fields: dict, ai_sections: OrderedDict, report: list,
+                        images: list | None = None, auto_images: bool = True) -> str:
+    """把 AI/粘贴的内容**增量合并**进一篇已存在的笔记，返回合并后的完整文本（不写盘）。
+
+    规则：只填空字段、只填空小节、只追加缺失小节；已有内容一律保留（格式规范 §1）。
+    report 里会逐条写明「正文填充/正文填空/新增小节/正文保留已有」，界面据此显示摘要。
+    """
+    ai_sections = normalize_sections_input(ai_sections)
+    existing = target.read_text(encoding="utf-8")
+    fields, body = split_frontmatter(existing)
+    if fields is None:
+        fields, body = {}, existing
+    fields = canonicalize_fields(fields, report)          # 中文键 → 英文键、去掉 [[ ]]
+    ai_en = canonicalize_fields({k: v for k, v in (ai_fields or {}).items()
+                                 if str(k).strip() not in ("类型", "type", "标签", "tags")}, report)
+    # 老笔记里已有的中文键允许继续填充；不允许新增非英文键（格式规范 §1-1）
+    ai_en = OrderedDict((k, v) for k, v in ai_en.items()
+                        if FIELD_KEY_RE.match(str(k)) or k in fields)
+    fields = update_frontmatter(fields, ai_en, report)
+    existing_sections = parse_sections(body)
+    preamble, _rest = _split_preamble(body)          # H1 + 引言段落不能丢
+    # 先对齐已有笔记的小节（保住旧标题），剩下的再对齐模板（新小节用规范 emoji 标题）
+    aligned = align_sections(ai_sections, existing_sections)
+    resolved = OrderedDict((k, v) for k, v in aligned.items() if k in existing_sections)
+    leftover = OrderedDict((k, v) for k, v in aligned.items() if k not in existing_sections)
+    template_sections = parse_sections(template_skeleton(cfg, type_))
+    if leftover and template_sections:
+        leftover = align_sections(leftover, template_sections)
+    merged_body = merge_sections(existing_sections,
+                                 OrderedDict(list(resolved.items()) + list(leftover.items())),
+                                 report)
+    merged_text = "\n".join(preamble).strip("\n")
+    if merged_text:
+        merged_text += "\n\n" + build_body(merged_body)
+    else:
+        merged_text = build_body(merged_body)
+    text = ("---\n" + serialize_simple_yaml(fields) + "\n---\n\n"
+            + normalize_note_body(merged_text, title, report, template_footer(cfg, type_)))
+    entries = _image_entries(cfg, title, fields, images, auto_images)
+    if entries:
+        text = insert_images(text, entries)
+        report.append("配图：" + "、".join(str(e.get("file")) for e in entries))
+    return text
+
+
+def summarize_merge(report: list) -> str:
+    """把 merge 报告压成一行摘要（界面用）：补充/填空/新增/跳过/字段。"""
+    def count(prefix: str, *more: str) -> int:
+        keys = (prefix,) + more
+        return sum(1 for r in (report or []) if r.startswith(keys))
+    filled = count("正文填充：", "正文填空", "正文引言填充：")
+    added = count("新增小节：")
+    kept = count("正文保留已有：")
+    fld = count("frontmatter 填充：")
+    bits = []
+    if filled:
+        bits.append(f"补充/填空 {filled} 个小节")
+    if added:
+        bits.append(f"新增 {added} 个小节")
+    if fld:
+        bits.append(f"补 {fld} 个字段")
+    if kept:
+        bits.append(f"保留已有 {kept} 个小节")
+    return "；".join(bits) or "没有可补充的新内容"
+
+
+def section_stats(cfg: dict, path: Path) -> dict:
+    """一篇笔记的小节填充情况：{filled, empty, sections:[{label, filled, empty}]}。
+
+    "空"= 该小节里只有 TODO/占位；"已填"= 至少有一行实质内容。界面用它一眼看出这篇还差什么。
+    """
+    out = {"filled": 0, "empty": 0, "sections": []}
+    path = Path(path)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return out
+    body = split_frontmatter(text)[1] or text
+    for _norm, (label, body_lines) in parse_sections(body).items():
+        lines = [b for b in body_lines if str(b).strip()]
+        real = [b for b in lines if not _is_placeholder_line(b) and TODO_TEXT not in str(b)]
+        item = {"label": label.strip("# ").strip(), "filled": len(real),
+                "empty": max(0, len(lines) - len(real))}
+        out["sections"].append(item)
+        if item["filled"]:
+            out["filled"] += 1
+        else:
+            out["empty"] += 1
+    return out
+
+
+def find_existing_note(cfg: dict, title: str, type_: str = "",
+                       extra_terms: list | None = None) -> dict:
+    """查重：知识库里有没有这篇词条（同名词条 + 相近名建议），并给出已有小节的填充情况。
+
+    返回 {found, path, matches:[{path,dir,title,size_kb,mtime,sections:[{label,filled,empty}]}],
+          suggestions:[{title,path,dir}], route_hint}
+    """
+    out = {"found": False, "path": "", "matches": [], "suggestions": [], "route_hint": ""}
+    kb = resolve_kb(cfg)
+    name = sanitize_title(title or "")
+    if kb is None or not name:
+        return out
+    paths = find_note_paths(cfg, name)
+    dir_hint, _status = resolve_route_dir(cfg, type_) if type_ else (None, "")
+    out["route_hint"] = str(dir_hint) if dir_hint else ""
+    target = (dir_hint / f"{name}.md") if dir_hint else None
+    if target is not None and target.is_file() and target not in paths:
+        paths.insert(0, target)
+    for p in paths:
+        try:
+            text = p.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        secs = section_stats(cfg, p)["sections"]
+        try:
+            stat = p.stat()
+            size_kb = round(stat.st_size / 1024, 1)
+            mtime = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            size_kb, mtime = 0.0, ""
+        out["matches"].append({"path": str(p), "dir": p.parent.name, "title": p.stem,
+                               "size_kb": size_kb, "mtime": mtime, "sections": secs})
+    out["found"] = bool(out["matches"])
+    if out["matches"]:
+        out["path"] = out["matches"][0]["path"]
+    # 相近名建议（名字互相包含），方便用户发现"其实已经建过、只是名字略不同"
+    terms = [t for t in ([name] + list(extra_terms or [])) if t and len(str(t)) >= 2]
+    seen = {m["path"] for m in out["matches"]}
+    for p in kb.rglob("*.md"):
+        if _is_skipped_path(p) or str(p) in seen:
+            continue
+        stem = p.stem
+        if any(str(t) in stem or stem in str(t) for t in terms):
+            out["suggestions"].append({"title": stem, "path": str(p), "dir": p.parent.name})
+        if len(out["suggestions"]) >= 12:
+            break
+    return out
+
+
+def _is_skipped_path(p: Path) -> bool:
+    """跳过模板/附件/资产目录（用子串匹配，像 `Templates（模板）` 这种带后缀的也算）。"""
+    skip = ("Templates", "模板", "Assets", "Attachments", "附件", "资产",
+            "_备份", "_词表", ".obsidian", ".trash")
+    return any(k in str(part) for part in p.parts for k in skip)
+
+
+def list_notes(cfg: dict, keyword: str = "", limit: int = 400) -> list:
+    """列出知识库里的词条（⑦ 补充更新页选目标条目用）。
+
+    keyword 支持**多个词（空格分隔，全部命中才算）**，忽略大小写；为空则按目录顺序列出。
+    """
+    kb = resolve_kb(cfg)
+    if kb is None:
+        return []
+    terms = [t for t in re.split(r"\s+", str(keyword or "").strip().lower()) if t]
+    out = []
+    for p in sorted(kb.rglob("*.md")):
+        if _is_skipped_path(p):
+            continue
+        if terms:
+            hay = (p.stem + " " + p.parent.name).lower()
+            if not all(t in hay for t in terms):
+                continue
+        try:
+            st = p.stat()
+            out.append({"title": p.stem, "dir": p.parent.name, "path": str(p),
+                        "size_kb": round(st.st_size / 1024, 1),
+                        "mtime": datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M")})
+        except Exception:
+            continue
+        if len(out) >= limit:
+            break
+    return out
+
+
+def detect_type_of_note(cfg: dict, path: Path | None = None, text: str = "") -> str:
+    """判断一篇笔记属于哪个类型：frontmatter 的 type → 所在目录对应的类型。"""
+    if path is not None:
+        try:
+            text = Path(path).read_text(encoding="utf-8")
+        except Exception:
+            pass
+    fields, _body = split_frontmatter(text or "")
+    if isinstance(fields, dict):
+        t = str(fields.get("type") or "").strip()
+        if t:
+            return t
+    if path is not None:
+        d = normalize_dir_name(Path(path).parent.name)
+        for type_, dirname in (cfg.get("routes") or {}).items():
+            if normalize_dir_name(dirname) == d:
+                return type_
+    return ""
+
+
+def _add_missing_template_sections(cfg: dict, type_: str, text: str, report: list,
+                                   title: str = "") -> str:
+    """把模板里有、笔记里没有的 **顶级 `##` 小节**补成 TODO（放在页脚之前）。"""
+    if not type_:
+        return text
+    try:
+        template_sections = parse_sections(template_skeleton(cfg, type_))
+    except Exception:
+        return text
+    if not template_sections:
+        return text
+    fields, body = split_frontmatter(text)
+    fields, body = (fields or {}), (body or text)
+    current = parse_sections(body)
+    preamble, _rest = _split_preamble(body)
+    have = {section_clean_name(k) for k in current}
+    merged = OrderedDict(current)
+    added = []
+    for norm, (label, _b) in template_sections.items():
+        clean = section_clean_name(norm)
+        if not label.strip().startswith("## ") or clean in have or "参考资料" in clean:
+            continue
+        merged[norm] = [label, ["- " + TODO_TEXT]]
+        added.append(label.strip("# ").strip())
+    if not added:
+        return text
+    report.append("补齐模板缺失小节：" + "、".join(added[:6]) + ("…" if len(added) > 6 else "")
+                  + "（已写 TODO）")
+    head = "\n".join(preamble).strip("\n")
+    merged_text = (head + "\n\n" if head else "") + build_body(merged)
+    return ("---\n" + serialize_simple_yaml(fields) + "\n---\n\n"
+            + normalize_note_body(merged_text, title or str((fields or {}).get("title") or ""),
+                                  report, template_footer(cfg, type_)))
+
+
+def update_note_file(cfg: dict, path: Path, sections: OrderedDict | None = None,
+                     fields: dict | None = None, summary: str = "", images: list | None = None,
+                     add_missing_sections: bool = False, dry_run: bool = True,
+                     plain_text: str = "") -> dict:
+    """把内容整合进**指定的** .md（⑦ 补充更新页用）：
+
+    * 自动按模板对齐小节（`## 事件经过` → `## 📅 事件经过`），模板变量/字段照格式规范合并；
+    * **只填空、只追加缺失小节，已有内容一律保留**；整篇还会按格式规范归一（唯一 H1、TODO 占位、页脚）；
+    * `add_missing_sections=True` 时把模板里有、笔记里没有的顶级小节补成 TODO；
+    * `plain_text`：粘贴内容没有 `##` 小节时，整段塞进**第一个空小节**（笔记里的优先，其次模板里的）；
+    * `dry_run=True` 只返回整合后的全文与改动摘要，不写盘。
+    返回 {ok, path, action, type, title, text, report, summary, changes}
+    """
+    sections = normalize_sections_input(sections) if sections is not None else sections
+    path = Path(path)
+    out = {"ok": False, "path": str(path), "action": "", "type": "", "title": path.stem,
+           "text": "", "report": [], "summary": "", "changes": {}}
+    if not path.is_file():
+        out["report"].append(f"文件不存在：{path}")
+        return out
+    type_ = detect_type_of_note(cfg, path)
+    out["type"] = type_
+    report: list = []
+    if not sections and str(plain_text or "").strip():
+        # 没有 ## 分段 → 找第一个空小节装进去（笔记里的优先，其次模板里的）
+        try:
+            exist_body = split_frontmatter(path.read_text(encoding="utf-8"))[1] or ""
+        except Exception:
+            exist_body = ""
+        exist_secs = parse_sections(exist_body)
+        tpl_secs = parse_sections(template_skeleton(cfg, type_)) if type_ else OrderedDict()
+        pick = next((n for n, (_lab, b) in exist_secs.items() if is_fillable(b)), None)
+        pool = exist_secs if pick is not None else tpl_secs
+        if pick is None:
+            pick = next((n for n, (_lab, b) in tpl_secs.items() if is_fillable(b)), None)
+        if pick is not None:
+            label = (pool.get(pick) or tpl_secs.get(pick) or [pick])[0]
+            sections = OrderedDict({pick: [label, [ln for ln in str(plain_text).splitlines()
+                                                 if ln.strip()]]})
+            report.append(f"内容没有 ## 小节 → 整段放进「{label.strip('# ').strip()}」")
+    text = merge_into_existing(cfg, path, type_, path.stem, fields or {},
+                               sections or OrderedDict(), report, images=images,
+                               auto_images=bool(images))
+    if add_missing_sections:
+        text = _add_missing_template_sections(cfg, type_, text, report, path.stem)
+    out["text"] = text
+    out["report"] = report
+    out["summary"] = summarize_merge(report) if sections else "仅按格式规范整理（未加新内容）"
+    out["changes"] = {
+        "filled": sum(1 for r in report if r.startswith(("正文填充：", "正文填空", "正文引言填充："))),
+        "added": sum(1 for r in report if r.startswith("新增小节：")),
+        "kept": sum(1 for r in report if r.startswith("正文保留已有：")),
+        "fields": sum(1 for r in report if r.startswith("frontmatter 填充：")),
+    }
+    if dry_run:
+        out.update(ok=True, action="预览")
+        return out
+    before = path.read_text(encoding="utf-8")
+    dest = backup_note(path, resolve_kb(cfg))
+    if dest is not None:
+        try:
+            rel = dest.relative_to(backup_root(create=False))
+        except Exception:
+            rel = Path(dest.name)
+        report.append(f"旧版已备份：{BACKUP_DIR_NAME}/{rel}")
+    if text.strip() == before.strip():
+        out.update(ok=True, action="无改动", report=report + ["文件内容没有变化，未写盘"])
+        return out
+    write_text_keep_eol(path, text)
+    out.update(ok=True, action="补充更新", report=report)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 正文关键词双链：把正文里出现的知识库词条名自动包成 [[ ]]（已有链接/代码/图片不动）
+# ---------------------------------------------------------------------------
+LINK_SKIP_TITLE_PARTS = ("索引", "总览", "首页", "目录", "模板", "清单")
+LINK_SKIP_TITLE_SUFFIX = ("索引", "模板", "清单", "总览", "目录", "首页")
+
+
+def is_skip_title(name: str) -> bool:
+    """导航类笔记：**正好等于**这些词，或**以它们结尾**（如 `_索引`、`人物模板`）。
+    不含用"包含"判断 —— 这样「索引与统计」这类内容型笔记不会被误杀。"""
+    s = str(name or "").strip()
+    if not s:
+        return False
+    if s in LINK_SKIP_TITLE_PARTS:
+        return True
+    return s.endswith(LINK_SKIP_TITLE_SUFFIX)
+# 过于通用的短名：正文里多是"泛指"，默认不链（可用 cfg["link_skip_words"] 覆盖/增补）
+LINK_GENERIC_SKIP = ("中国", "日本", "美国", "英国", "苏联", "德国", "法国", "俄国", "欧洲", "世界")
+# 事件类词条的通称后缀：`九一八事变` 这种，正文里常写成「九一八」，允许再匹配一个简称
+LINK_SHORT_SUFFIXES = ("事变", "事件", "战争", "会战", "战役", "战斗", "运动", "起义",
+                       "政变", "罢工", "惨案", "屠杀", "条约", "协定", "会议", "谈判")
+LINK_SHORT_MIN = 3          # 简称至少 3 个字（避免「西安事变 → 西安」这种把地名链进去）
+LINK_NAME_SUFFIXES = ("战争", "战役", "战斗", "会战", "事变", "事件", "冲突", "运动", "起义",
+                      "政变", "罢工", "惨案", "屠杀", "协定", "议定书", "条约", "会议", "谈判")
+
+
+def name_core(name: str) -> str:
+    """取名字的"主干"：去掉战争/事变/协定/会议这类后缀，用于把同一实体的多种写法归并。"""
+    s = str(name or "").strip()
+    for _ in range(2):                                # 最多剥两层（如 中东路战争 → 中东路）
+        for suf in LINK_NAME_SUFFIXES:
+            if s.endswith(suf) and len(s) - len(suf) >= 2:
+                s = s[: -len(suf)]
+                break
+        else:
+            break
+    return s
+# 这些小节/行里的词不链：参考资料里的书名、图片署名行里的网站与许可名
+LINK_SKIP_SECTION_PARTS = ("参考资料", "参考", "引用", "注释", "来源", "延伸阅读", "参考文献", "书目")
+LINK_SKIP_LINE_RE = re.compile(r"图片来源|来源[：:]|License|许可|维基百科|Wikimedia|公有领域")
+# 期刊/网站/许可这类"非词条"字样，即使出现在正文也不当双链目标
+LINK_BOILERPLATE = ("维基百科", "Wikipedia", "Wikimedia", "Public domain", "公有领域",
+                    "知识共享", "Creative Commons", "CC BY", "GFDL", "Obsidian", "Dataview")
+
+
+def title_variants(title: str, short_forms: bool = True) -> list:
+    """一个词条名可以匹配的写法：原名、去掉年份前缀（`1931年-九一八事变` → `九一八事变`）、简称。"""
+    out = []
+    t = str(title or "").strip()
+    if not t:
+        return out
+    out.append(t)
+    bare = re.sub(r"^\d{3,4}\s*年\s*[-—－–]?\s*", "", t).strip()
+    if bare and bare != t:
+        out.append(bare)
+    if short_forms:
+        for base in list(out):
+            for suf in LINK_SHORT_SUFFIXES:
+                if base.endswith(suf) and len(base) - len(suf) >= LINK_SHORT_MIN:
+                    stem = base[: -len(suf)]
+                    if stem not in out and not is_skip_title(stem):
+                        out.append(stem)
+                    break
+    seen, uniq = set(), []
+    for x in out:
+        if x and x not in seen:
+            seen.add(x)
+            uniq.append(x)
+    return uniq
+LINK_PROTECT_RE = re.compile(
+    r"(\[\[[^\]]*\]\]"            # 已有 wiki 链接
+    r"|!\[[^\]]*\]\([^)]*\)"      # markdown 图片
+    r"|`[^`]*`"                   # 行内代码
+    r"|<[^>]+>"                   # HTML 标签
+    r"|https?://\S+)"             # 网址
+)
+
+
+def build_link_index(cfg: dict, min_len: int = 2, short_forms: bool = True,
+                     only_resolved: bool = False) -> list:
+    """候选写法表：[(可匹配写法, 目录, **真实词条名**)]，按长度从长到短。
+
+    每个词条会贡献：原名、**去掉年份前缀的名字**（`1931年-九一八事变` → `九一八事变`）、
+    frontmatter 里的 aliases、以及事件类词条的**简称**（`九一八事变` → `九一八`）。
+    第三项是真名，用于把「正文里的通称」链到「能解析的真实词条」（`[[1931年-九一八事变|九一八事变]]`）。
+
+    `only_resolved=True` 时只保留**库内确有对应笔记**的写法（避免写出一堆红链）。
+    """
+    out: list = []
+    titles: set = set()
+    resolved: set = set()
+    if only_resolved:
+        kb = resolve_kb(cfg)
+        if kb is not None:
+            resolved = {p.stem for p in kb.rglob("*.md") if not _is_skipped_path(p)}
+    for n in list_notes(cfg):
+        title = str(n.get("title") or "").strip()
+        if len(title) < min_len or is_skip_title(title):
+            continue
+        titles.add(title)
+        names = title_variants(title, short_forms)
+        try:
+            fields, _body = split_frontmatter(Path(n["path"]).read_text(encoding="utf-8"))
+        except Exception:
+            fields = {}
+        aliases = (fields or {}).get("aliases")
+        if isinstance(aliases, str):
+            aliases = [aliases]
+        for a in (aliases or []):
+            a = str(a).strip()
+            if len(a) >= min_len and not is_skip_title(a):
+                names.extend(title_variants(a, short_forms))
+        for name in names:
+            if len(name) >= min_len:
+                out.append((name, n.get("dir") or "", title))
+    # 再把「链接词表」里的写法并进来（AI 识别过的别名/通称/已有管道链接，零 token 复用）
+    terms = (load_term_dictionary().get("terms") or {})
+    for disp, real in terms.items():
+        disp, real = str(disp).strip(), str(real).strip()
+        if len(disp) < min_len or not real:
+            continue
+        if real not in titles or is_skip_title(real):
+            continue                                  # 词表里指向"不存在的笔记/索引类"的条目一律不采纳
+        out.append((disp, "", real))
+    if only_resolved:                                  # 只留能解析到真实笔记的写法
+        out = [x for x in out if str(x[2]) in resolved]
+    out.sort(key=lambda x: -len(x[0]))
+    return out
+
+
+def compile_link_pattern(index: list):
+    """把候选写法编成一个正则：**长的在前**，`|` 交替从左到右匹配，短名不会吃掉长名。"""
+    titles = sorted({str(t) for t, *_rest in (index or []) if str(t).strip()},
+                    key=len, reverse=True)
+    if not titles:
+        return None
+    return re.compile("|".join(re.escape(t) for t in titles))
+
+
+TERM_DICT_FILE = "_链接词表.json"
+LINK_FILE_EXT_RE = re.compile(r"\.(?:png|jpe?g|webp|gif|bmp|svg|pdf|docx?|xlsx?|pptx?|md|txt|zip)$", re.I)
+
+
+def _looks_like_file(name: str) -> bool:
+    """名字像文件名/附件（图片、pdf、md…）就不当词条。"""
+    return bool(LINK_FILE_EXT_RE.search(str(name or "").strip()))
+
+
+def term_dict_path(cfg: dict | None = None) -> Path:
+    """词表文件：**按知识库一份**（切库不再互相覆盖）。
+
+    * 环境变量 `KB_TERM_DICT` 可强制指定单文件（测试用）；
+    * 默认落在 `<程序目录>/_词表/<库名>__<路径哈希>.json`；
+    * 老的单文件 `<程序目录>/_链接词表.json` 若存在且分库文件还没有，会自动迁移（复制）过去。
+    """
+    env = (os.environ.get("KB_TERM_DICT") or "").strip()
+    if env:
+        return Path(env)
+    try:
+        cfg = cfg if cfg is not None else load_config()
+    except Exception:
+        cfg = {}
+    kb = str((cfg or {}).get("knowledge_base") or "").strip()
+    if not kb:
+        return app_dir() / TERM_DICT_FILE                # 没设库时退回老路径
+    name = re.sub(r"[^\w\u4e00-\u9fff]+", "_", Path(kb).name)[:40] or "kb"
+    d = app_dir() / "_词表"
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return app_dir() / TERM_DICT_FILE
+    tail = re.sub(r"[^0-9A-Za-z]+", "", profile_key(kb))[-8:] or "0"
+    target = d / f"{name}__{tail}.json"
+    legacy = app_dir() / TERM_DICT_FILE
+    if not target.exists() and legacy.is_file():
+        try:
+            shutil.copy2(legacy, target)                 # 迁移旧单文件（只复制，不删原件）
+        except Exception:
+            pass
+    return target
+
+
+def build_term_dictionary(cfg: dict, save: bool = True) -> dict:
+    """扫全库生成"链接词表"（**零 token**）：
+
+    * 词条名 + 去掉年份前缀的写法 + frontmatter aliases；
+    * 正文里已有的 `[[目标|显示写法]]` → 显示写法指向目标；`[[目标]]` → 目标指向自己；
+    * 库内没有对应笔记的名字（红链/待建）单独存一份，供"该建哪些词条"清单使用。
+
+    这样 AI 只在一篇里认出来的写法（如「九一八事变」指到 `1931年-九一八事变`），
+    以后在**任何**笔记里都能被本地引擎免费链上。
+    """
+    out = {"version": 1, "built": datetime.now().strftime("%Y-%m-%d %H:%M"),
+           "terms": {}, "unresolved": []}
+    kb = resolve_kb(cfg)
+    if kb is None:
+        return out
+    names = {p.stem for p in kb.rglob("*.md") if not _is_skipped_path(p)}
+    terms: dict = {}
+    missing: set = set()
+    for n in list_notes(cfg):
+        title = str(n.get("title") or "").strip()
+        if not title:
+            continue
+        for v in title_variants(title):
+            terms.setdefault(v, title)
+        try:
+            text = Path(n["path"]).read_text(encoding="utf-8")
+        except Exception:
+            continue
+        fields, body = split_frontmatter(text)
+        al = (fields or {}).get("aliases")
+        if isinstance(al, str):
+            al = [al]
+        for a in (al or []):
+            for v in title_variants(str(a).strip()):
+                terms.setdefault(v, title)
+        for m in re.finditer(r"(?<!!)\[\[([^\]|]+)(?:\|([^\]]+))?\]\]", body or ""):
+            target = m.group(1).strip()
+            disp = (m.group(2) or "").strip()
+            if _looks_like_file(target) or re.match(r"^\d{2}\s*\S", target):
+                continue                              # 图片/附件、模块导航链接（如 01时间线）不当词条
+            if is_skip_title(target):
+                continue                              # 索引/模板/清单类一律不收
+            if target in names:                       # 库内确实有这篇 → 学成"写法 → 真实词条"
+                if disp and not _looks_like_file(disp):
+                    terms.setdefault(disp, target)
+                terms.setdefault(target, target)
+            elif len(target) >= 2:
+                missing.add(target)                   # 库内还没有 → 进《待建词条》清单（不参与加链）
+    old_terms = dict(load_term_dictionary(cfg).get("terms") or {})
+    merged_terms = dict(old_terms)
+    merged_terms.update(terms)                        # 新的覆盖旧的，旧的其余保留（换库重建不丢）
+    out["terms"] = merged_terms
+    terms = merged_terms
+    fresh = {t for t in terms if terms[t] == t and t not in names} | missing
+    old = set()
+    try:                                              # 与已有清单取并集：重建不会丢掉"待建词条"积累
+        old = {str(x) for x in (load_term_dictionary(cfg).get("unresolved") or [])}
+    except Exception:
+        pass
+    out["unresolved"] = sorted(fresh | old)
+    if save:
+        try:
+            term_dict_path(cfg).write_text(json.dumps(out, ensure_ascii=False, indent=1),
+                                        encoding="utf-8")
+        except Exception:
+            pass
+    return out
+
+
+def load_term_dictionary(cfg: dict | None = None) -> dict:
+    """读**当前知识库**的词表；没有或损坏就返回空 dict（不影响其它功能）。"""
+    p = term_dict_path(cfg)
+    if not p.is_file():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def link_map_from_index(index: list) -> dict:
+    """候选表 → `写法: 链接文本`：写法与真实词条名不同时用管道链接 `[[真实|写法]]`。"""
+    out: dict = {}
+    for name, _d, real in (index or []):
+        name, real = str(name or ""), str(real or "")
+        if name and real and name != real:
+            out.setdefault(name, f"[[{real}|{name}]]")
+    return out
+
+
+def link_keywords_in_text(text: str, index: list, self_title: str = "",
+                          first_only: bool = True, skip_headings: bool = True,
+                          max_links: int = 80, pattern=None,
+                          skip_titles=None, link_map: dict | None = None,
+                          skip_sections=None, skip_line_re=None) -> tuple:
+    """把正文里出现的词条名包成 `[[ ]]`。返回 (新文本, 新增链接列表)。
+
+    * frontmatter、已有 `[[ ]]`、图片、行内代码、网址一律不动；
+    * 标题行默认跳过（`skip_headings=True`）；代码块内不动；
+    * 默认每个词条只链第一次（`first_only=True`）；`skip_titles`（含自己标题/别名）不链；
+    * `link_map`：匹配到的写法 → 要写入的链接（如 `{"九一八": "[[1931年-九一八事变|九一八]]"}`）；
+    * `skip_sections`：这些小节名（含子串）里的内容一律不链（默认参考资料/引用/延伸阅读…）；
+      `skip_line_re`：匹配的行不链（默认图片署名行、"来源："、"许可"…）；
+    * 总数上限 `max_links`。
+    """
+    fields, body = split_frontmatter(text)
+    body = body if fields is not None else text
+    pattern = pattern or compile_link_pattern(index)
+    if pattern is None and not link_map:
+        return text, []
+    skip = {str(x) for x in (skip_titles or ()) if str(x).strip()}
+    if self_title:
+        skip.add(str(self_title))
+    if link_map:
+        keys = set(link_map) | {str(t) for t, *_r in (index or []) if str(t).strip()}
+        pattern = re.compile("|".join(re.escape(k) for k in
+                                      sorted(keys, key=len, reverse=True)))
+    skip_sections = tuple(LINK_SKIP_SECTION_PARTS if skip_sections is None else skip_sections)
+    line_re = LINK_SKIP_LINE_RE if skip_line_re is None else skip_line_re
+    used: set = set()
+    added: list = []
+    out: list = []
+    in_fence = False
+    cur_section = ""
+
+    def link_seg(seg: str) -> str:
+        def repl(m):
+            t = m.group(0)
+            if t in skip or (first_only and t in used) or len(added) >= max_links:
+                return t
+            used.add(t)
+            added.append(t)
+            return (link_map or {}).get(t) or f"[[{t}]]"
+        return pattern.sub(repl, seg)
+
+    _lines = (body or "").splitlines()
+    _tbl_sep = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?\s*$")
+    _skip_idx = set()
+    for _i, _ln in enumerate(_lines):                 # 表头行（紧跟 |---| 分隔行的那一行）跳过
+        if _tbl_sep.match(_ln) and _i > 0:
+            _skip_idx.add(_i - 1)
+    for _i, line in enumerate(_lines):
+        s = line.strip()
+        if _i in _skip_idx:
+            out.append(line)
+            continue
+        if s.startswith("#"):
+            cur_section = section_clean_name(s)          # 记住当前小节（下面按小节跳过）
+            out.append(line)
+            continue
+        if s.startswith("```"):
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        if in_fence or (skip_headings and s.startswith("#")):
+            out.append(line)
+            continue
+        if any(k in cur_section for k in skip_sections) or (line_re and line_re.search(line)):
+            out.append(line)
+            continue
+        parts = LINK_PROTECT_RE.split(line)
+        out.append("".join(p if (i % 2) else link_seg(p) for i, p in enumerate(parts)))
+    new_body = "\n".join(out)
+    if fields is not None:
+        return "---\n" + serialize_simple_yaml(fields) + "\n---\n\n" + new_body, added
+    return new_body, added
+
+
+def note_own_names(cfg: dict, path: Path) -> set:
+    """这篇笔记自己的标题 + 别名（不给自己加双链）。"""
+    path = Path(path)
+    names = {path.stem}
+    try:
+        fields, _b = split_frontmatter(path.read_text(encoding="utf-8"))
+        al = (fields or {}).get("aliases")
+        if isinstance(al, str):
+            al = [al]
+        names |= {str(a).strip() for a in (al or []) if str(a).strip()}
+    except Exception:
+        pass
+    return names
+
+
+def link_skip_words(cfg: dict) -> set:
+    """默认不链的通用短名（cfg["link_skip_words"] 可覆盖）。"""
+    custom = cfg.get("link_skip_words")
+    if isinstance(custom, (list, tuple)) and custom:
+        return {str(x).strip() for x in custom if str(x).strip()}
+    return set(LINK_GENERIC_SKIP)
+
+
+SKELETON_TYPE_HINTS = (
+    # (类型, 名称后缀) —— 顺序：先具体后笼统；判不出就用 fallback（默认"专题"）
+    ("战役", ("会战", "战役", "战斗", "大捷", "之战", "海战", "空战", "围攻", "攻坚战",
+              "战争", "内战")),
+    ("条约", ("条约", "协定", "议定书", "公约", "约法", "密约", "章程", "照会", "宣言")),
+    ("事件", ("事变", "事件", "运动", "起义", "政变", "罢工", "惨案", "屠杀", "会议", "大会",
+              "谈判", "清党", "围剿", "整风", "摩擦", "暴动", "高潮", "风潮", "合作", "革命")),
+    ("军队", ("集团军", "军团", "路军", "舰队", "水师", "军校", "讲武堂", "武备学堂", "学堂",
+              "兵工厂", "军区", "军", "师", "旅", "团")),
+    ("派系", ("军阀", "系", "派", "党", "联盟", "会社", "帮")),
+    ("制度", ("制度", "政策", "法案", "官制", "币制", "税法", "科举", "财政")),
+    ("地区", ("根据地", "边区", "半岛", "群岛", "租界", "铁路", "省", "市", "县", "地区",
+              "岛", "关", "港")),
+    ("史料", ("档案", "文献", "资料", "实录", "日记", "回忆录", "年谱", "全集", "文集", "报刊",
+              "汇编", "史", "研究")),
+)
+SKELETON_DEFAULT_TYPE = "专题"
+
+
+def guess_note_type(name: str, fallback: str = SKELETON_DEFAULT_TYPE) -> str:
+    """按名字猜词条类型（保守规则；`1931年-…` 一律算时间线）。猜不出返回 fallback。"""
+    s = str(name or "").strip()
+    if re.match(r"^\d{3,4}\s*年", s):
+        return "时间线"
+    for t, kws in SKELETON_TYPE_HINTS:
+        if any(s.endswith(k) for k in kws):
+            return t
+    return fallback
+
+
+def parse_keyword_lines(text, default_type: str = "", default_dir: str = "") -> list:
+    """把"每行一个关键词"的清单解析成 [{name, type, dir}]。
+
+    支持：`名称`、`类型:名称`（类型须是知识库类型映射里的）、行首 `-`/`*`；`#` 注释行忽略。
+    """
+    if isinstance(text, (list, tuple, set)):
+        lines = [str(x) for x in text]
+    else:
+        lines = str(text or "").splitlines()
+    known = {t for t, _ in SKELETON_TYPE_HINTS}
+    try:
+        known |= set((load_config().get("routes") or {}).keys())
+    except Exception:
+        pass
+    out: list = []
+    for raw in lines:
+        line = str(raw).strip()
+        if not line or line.startswith("#"):
+            continue
+        line = line.lstrip("-*+ \t").strip()
+        if not line:
+            continue
+        typ, name = "", line
+        m = re.match(r"^([\u4e00-\u9fa5A-Za-z]{1,8})\s*[:：]\s*(.+)$", line)
+        if m and m.group(1) in known:
+            typ, name = m.group(1), m.group(2).strip()
+        if name.strip():
+            out.append({"name": name.strip(), "type": typ or default_type, "dir": default_dir})
+    return out
+
+
+ENTITY_BAD_CHARS = ("的", "与", "和", "在", "为", "任", "及", "等", "，", "（", "(", "、", "：", "；")
+ENTITY_BAD_PREFIX = ("创建", "建立", "开展", "进行", "推动", "加强", "实现", "形成", "发动",
+                     "组织", "实行", "确立", "参与", "参加", "担任", "出任", "领导", "指挥",
+                     "颁布", "发布", "通过", "签订", "发表", "宣布", "召开", "举行", "决定")
+ENTITY_BAD_SUFFIX = ("建立", "传播", "创建", "加强", "发展", "形成", "实施", "开展", "工作",
+                     "活动", "问题", "关系", "情况", "过程", "时期", "阶段", "背景", "影响",
+                     "意义", "作用", "措施", "方案", "演变", "变迁", "全权代表", "成立",
+                     "产生", "召开", "举行", "爆发", "结束", "失败", "胜利", "出洋考察")
+
+
+def looks_like_entity(name: str, max_len: int = 16) -> bool:
+    """像不像一个"能单独建条"的专名（而不是一句话或一段描述）。"""
+    s = str(name or "").strip().strip("《》\"'“”")
+    if not (2 <= len(s) <= max_len):
+        return False
+    if re.match(r"^\d{3,4}\s*年\s*[-—－–]", s):
+        return False                                   # 文件名词条（1937年-七七事变）不当待建专名
+    if any(c in s for c in ENTITY_BAD_CHARS):
+        return False
+    if s.startswith(ENTITY_BAD_PREFIX) or s.endswith(ENTITY_BAD_SUFFIX):
+        return False
+    return not re.search(r"[。！？；;]", s)
+
+
+def collect_missing_terms(cfg: dict, include_backups: bool = False, limit: int = 0) -> list:
+    """汇总"库内还没有对应笔记"的链接名（**包括备份里的红链**），按出现次数排序。
+
+    用途：清理红链后仍能保留/恢复《待建词条》清单（= 该建哪些词条）。
+    """
+    kb = resolve_kb(cfg)
+    if kb is None:
+        return []
+    names = {p.stem for p in kb.rglob("*.md") if not _is_skipped_path(p)}
+    sources = [p for p in kb.rglob("*.md") if not _is_skipped_path(p)]
+    bk = backup_root(create=False) / "笔记"
+    if include_backups and bk.is_dir():
+        sources += list(bk.rglob("*.md"))
+    count: dict = {}
+    for p in sources:
+        try:
+            text = p.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        for m in re.finditer(r"(?<!!)\[\[([^\]|]+)(?:\|([^\]]+))?\]\]", text):
+            t = m.group(1).strip()
+            if (not t or t in names or _looks_like_file(t)
+                    or re.match(r"^\d{2}\s*\S", t)):
+                continue
+            count[t] = count.get(t, 0) + 1
+    out = sorted(count, key=lambda x: (-count[x], -len(x)))
+    return out[:limit] if limit else out
+
+
+MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
+MD_TITLE_STRIP_RE = re.compile(r"^\s*(?:\d+[.、)）]\s*|[一二三四五六七八九十]+[、.)）]\s*|[-*+]\s+)")
+
+
+def clean_entry_title(raw: str) -> str:
+    """把标题行整理成词条名：去掉编号、外层 `[[ ]]`、`**`、书名号外的空白。"""
+    s = str(raw or "").strip()
+    s = re.sub(r"^\[\[([^\]|]+)(?:\|[^\]]+)?\]\]$", r"\1", s)
+    s = s.replace("**", "").strip()
+    s = MD_TITLE_STRIP_RE.sub("", s).strip()
+    return s.strip(" \t:：-—")
+
+
+def split_markdown_entries(text: str, level: int = 0) -> list:
+    """把一份 md 文档拆成多个词条（按标题切分）。
+
+    * `level=0`：自动挑"出现次数 ≥2 且层级最浅"的标题级别；`level=1` = `#`，2 = `##` …
+    * 文档开头的 frontmatter 当作整篇文档的元数据，不算词条；
+    * 代码块（``` 围栏）里的 `#` 不当标题；
+    * 每个词条返回 {title, body, meta(条目内自带的 frontmatter/类型行), line, level}。
+    """
+    text = str(text or "")
+    doc_fields, body = split_frontmatter(text)
+    lines = (body or "").splitlines()
+    heads = []                                            # [(行号, 级别, 标题)]
+    in_fence = False
+    for i, line in enumerate(lines):
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        m = MD_HEADING_RE.match(line)
+        if m:
+            heads.append((i, len(m.group(1)), clean_entry_title(m.group(2))))
+    use = int(level or 0)
+    if not heads:
+        return []
+    if use <= 0:                                          # 自动：重复出现的最浅级别
+        counts: dict = {}
+        for _i, lv, _t in heads:
+            counts[lv] = counts.get(lv, 0) + 1
+        cands = [lv for lv, c in counts.items() if c >= 2]
+        use = min(cands) if cands else min(counts)
+    picked = [(i, t) for i, lv, t in heads if lv == use and t]
+    out: list = []
+    for idx, (i, title) in enumerate(picked):
+        end = picked[idx + 1][0] if idx + 1 < len(picked) else len(lines)
+        chunk = "\n".join(lines[i + 1:end]).strip("\n")
+        meta = {}
+        sub_fields, sub_body = split_frontmatter(chunk)
+        if sub_fields:
+            meta = sub_fields
+            chunk = sub_body
+        m2 = re.search(r"(?:^|\n)\s*(?:[-*+]\s*)?\*{0,2}\s*(?:类型|type)\s*\*{0,2}\s*[:：]\s*([^\n]+)",
+                       chunk[:400], re.I)
+        if m2 and "类型" not in meta and "type" not in meta:
+            meta["类型"] = m2.group(1).strip()
+            chunk = chunk.replace(m2.group(0), "", 1).lstrip("\n")
+        out.append({"title": title, "body": chunk, "meta": meta, "level": use})
+    return out
+
+
+def import_markdown_document(cfg: dict, text: str, level: int = 0, type_override: str = "",
+                             target_dir: str = "", dry_run: bool = True, overwrite: bool = False,
+                             download_images: bool = False, limit: int = 0,
+                             on_progress=None) -> dict:
+    """把一份 md 文档**批量**建成规范词条：拆词条 → 判类型 → 套模板 → （缺目录则创建）→ 写入。
+
+    * 每个词条走的是 ⑥ 页同一条管线（`import_entry_from_text`）：套该类型的模板、
+      把小节对齐、图片入库、只补空缺不覆盖已有正文；
+    * 词条内自带 `类型: X`（或 frontmatter `type:`）时优先用它，其次按标题/正文猜；
+    * `dry_run=True` 只报告会建到哪、判成什么类型，不动文件。
+    返回 {ok, total, created, skipped, failed, report, entries}
+    """
+    entries = split_markdown_entries(text, level=level)
+    if limit:
+        entries = entries[:limit]
+    created, skipped, failed, report = [], [], [], []
+    for i, e in enumerate(entries, 1):
+        title = str(e.get("title") or "").strip()
+        body = str(e.get("body") or "")
+        meta = e.get("meta") or {}
+        typ = (str(meta.get("类型") or meta.get("type") or "").strip()   # 条目内写的类型优先
+               or str(type_override or "").strip()
+               or guess_note_type(title))
+        m_sec = re.search(r"^#{2,6}\s+\S", body, re.M)
+        if m_sec and body[:m_sec.start()].strip():
+            # 第一个小节之前的段落（导语）变成第一个小节里的首条要点，确保**一个字都不丢**
+            lead = " ".join(x.strip() for x in body[:m_sec.start()].strip().splitlines() if x.strip())
+            rest = body[m_sec.start():].rstrip()
+            nl = rest.find("\n")
+            item = f"- {lead}\n"
+            body = (rest[:nl + 1] + "\n" + item + rest[nl + 1:]) if nl >= 0 else (rest + "\n\n" + item)
+        if not overwrite:                              # 同名已存在 → 默认跳过（补充更新请用 ⑦ 页 / --overwrite）
+            routes = cfg.get("routes") or {}
+            rel = str(target_dir or routes.get(typ) or routes.get(title) or "").strip()
+            cand = None
+            if rel:
+                cand = Path(rel)
+                if not cand.is_absolute():
+                    cand = resolve_kb(cfg) / rel if resolve_kb(cfg) else None
+            if cand is not None and (cand / f"{sanitize_title(title)}.md").is_file():
+                report.append(f"{title} → 已存在，跳过（{cand.name}/）")
+                skipped.append(title)
+                continue
+        try:
+            r = import_entry_from_text(cfg, body, type_override=typ, title_override=title,
+                                       download_images=download_images, mode="auto",
+                                       dry_run=dry_run)
+        except Exception as exc:  # noqa: BLE001
+            r = {"ok": False, "report": [f"{type(exc).__name__}: {exc}"]}
+        line = (f"{title} → {r.get('type') or typ}"
+                f"（{'预览' if dry_run else r.get('action') or r.get('why') or '—'}）")
+        if not r.get("ok"):
+            reason = "；".join(str(x) for x in (r.get("report") or [])[:2]) or str(r.get("why") or "失败")
+            line = f"{title} → {r.get('type') or typ}（✗ {reason}）"
+        report.append(line)
+        if not r.get("ok"):
+            failed.append(title)
+        elif (r.get("path") and Path(str(r["path"])).is_file() and not dry_run
+              and r.get("action") in ("新建", "增量更新")):
+            created.append(f"{Path(str(r['path'])).parent.name}/{title}")
+        elif dry_run:
+            created.append(f"{r.get('type') or typ}：{title}")
+        else:
+            skipped.append(title)
+        if callable(on_progress):
+            try:
+                on_progress(i, len(entries), line)
+            except Exception:
+                pass
+    return {"ok": not failed, "total": len(entries), "created": created, "skipped": skipped,
+            "failed": failed, "report": report, "dry_run": dry_run, "entries": entries}
+
+
+ROUTE_HINTS = {
+    "时间线": ("时间线", "年表", "编年", "大事记", "纪年", "时间"),
+    "人物": ("人物", "名人", "传记", "群像", "图谱"),
+    "派系": ("派系", "党派", "政派", "政治", "势力", "集团", "派别"),
+    "军队": ("军队", "军事", "兵制", "军校", "部队", "武备", "军制"),
+    "国民党": ("国民党",),
+    "共产党": ("共产党", "中共"),
+    "制度": ("制度", "财政", "经济", "官制", "政策", "典章", "职官"),
+    "地区": ("地图", "地理", "疆域", "地区", "政区", "舆图"),
+    "国际势力": ("国际", "外交", "列强", "周边", "外族", "域外", "邦交"),
+    "条约": ("条约", "诏令", "文献", "原始", "文书", "档案", "盟约"),
+    "专题": ("专题", "研究", "论稿"),
+    "事件": ("事件", "编年", "大事", "事变"),
+    "战役": ("战役", "战争", "战事", "军事", "兵事"),
+    "史料": ("史料", "资料", "文献", "研究", "典籍"),
+}
+
+
+def suggest_routes_for_kb(cfg: dict, dirs=None) -> dict:
+    """按**当前知识库**的目录名，为每个类型挑一个最像的目录（换知识库时一键重排映射）。
+
+    返回 {类型: 目录名}；挑不出来的类型给空串（界面上会标出来让你手填）。
+    只做"名字像不像"的判断，不会动任何文件。
+    """
+    kb = resolve_kb(cfg)
+    if kb is None:
+        return {}
+    names = list(dirs or [r["name"] for r in scan_kb(kb) if r.get("role") != "系统目录"])
+    used: set = set()
+    out: dict = {}
+    for t in (cfg.get("routes") or {}):
+        best, best_score = "", 0
+        for nm in names:
+            if nm in used:
+                continue
+            score = 0
+            for kw in ROUTE_HINTS.get(t, (t,)):
+                if kw and kw in nm:
+                    score += 12 if kw == t else (8 if t in kw or kw in t else 5)
+            if score > best_score:
+                best, best_score = nm, score
+        if best:
+            used.add(best)
+        out[t] = best
+    return out
+
+
+def apply_routes(cfg: dict, mapping: dict, save: bool = True) -> dict:
+    """把 {类型: 目录名} 写进 cfg["routes"] 并（可选）落盘；返回实际改动。"""
+    routes = cfg.setdefault("routes", {})
+    changed = {}
+    for t, d in (mapping or {}).items():
+        t, d = str(t).strip(), str(d or "").strip()
+        if not t or not d:
+            continue
+        if routes.get(t) != d:
+            changed[t] = f"{routes.get(t) or '（未设置）'} → {d}"
+            routes[t] = d
+    if changed and save:
+        save_config(cfg)
+    return changed
+
+
+def ensure_route_dirs(cfg: dict, create: bool = True, extra: tuple = ()) -> dict:
+    """按②页映射在**当前知识库**里创建/检查每个类型的目录（换时期库、新建库时用）。
+
+    * `extra`：额外要建的目录名（如 `("00 首页", "Assets（图片地图）", "Attachments（PDF）")`）；
+    * `create=False` 只检查不创建。
+    返回 {ok, kb, created:[...], existing:[...], failed:[...], report:[...]}
+    """
+    out = {"ok": False, "kb": "", "created": [], "existing": [], "failed": [], "report": []}
+    kb = resolve_kb(cfg)
+    if kb is None:
+        out["report"].append("没有设置知识库目录（请到①页选目录）")
+        return out
+    out["kb"] = str(kb)
+    want: list = []
+    for t, d in (cfg.get("routes") or {}).items():
+        d = str(d or "").strip()
+        if d and d not in want:
+            want.append(d)
+    for d in extra:
+        d = str(d or "").strip()
+        if d and d not in want:
+            want.append(d)
+    if not want:
+        out["report"].append("②页还没有配置任何「类型 → 目录」映射")
+        return out
+    for name in want:
+        p = Path(name)
+        if not p.is_absolute():
+            p = kb / name
+        if p.is_dir():
+            out["existing"].append(name)
+            continue
+        if not create:
+            out["report"].append(f"缺失：{name}")
+            continue
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+            out["created"].append(name)
+        except Exception as exc:  # noqa: BLE001
+            out["failed"].append(name)
+            out["report"].append(f"创建失败：{name}（{type(exc).__name__}: {exc}）")
+    out["ok"] = not out["failed"]
+    out["report"].append(f"目录检查：已存在 {len(out['existing'])} 个"
+                         + (f"｜新建 {len(out['created'])} 个" if create else "")
+                         + (f"｜失败 {len(out['failed'])} 个" if out["failed"] else ""))
+    if out["created"]:
+        out["report"].append("新建：" + "、".join(out["created"][:20])
+                             + ("…" if len(out["created"]) > 20 else ""))
+    return out
+
+
+def create_skeleton_note(cfg: dict, name: str, type_: str = "", target_dir: str = "",
+                         dry_run: bool = True, overwrite: bool = False,
+                         summary: str = "") -> dict:
+    """建一篇"只有骨架（TODO 占位）"的词条：按类型选模板 → 放进类型对应目录。
+
+    * 已存在同名笔记：默认**跳过**；`overwrite=True` 改为"只补空缺"（绝不覆盖已有内容）；
+    * `target_dir` 为空则用 `cfg["routes"]`（② 类型映射页）里的目录；
+    * `dry_run=True` 只报告会建到哪，不动文件。
+    返回 {ok, name, type, dir, path, action, report}
+    """
+    out = {"ok": False, "name": str(name or "").strip(), "type": "", "dir": "", "path": "",
+           "action": "", "report": []}
+    kb = resolve_kb(cfg)
+    if kb is None:
+        out["report"].append("没有设置知识库目录（请到①页选目录）")
+        return out
+    title = sanitize_title(str(name or "").strip())
+    if not title:
+        out["report"].append("名字为空，跳过")
+        return out
+    out["name"] = title
+    t = str(type_ or "").strip() or guess_note_type(title)
+    out["type"] = t
+    routes = cfg.get("routes") or {}
+    rel = str(target_dir or "").strip() or str(routes.get(t) or "").strip()
+    if not rel:
+        out["report"].append(f"类型「{t}」没有对应目录（可到②页配映射，或指定目标目录）")
+        return out
+    dest_dir = Path(rel)
+    if not dest_dir.is_absolute():
+        dest_dir = kb / rel
+    path = dest_dir / f"{title}.md"
+    out["dir"] = dest_dir.name
+    out["path"] = str(path)
+    exists = path.exists()
+    if exists and not overwrite:
+        out.update(ok=True, action="已存在，跳过",
+                   report=[f"已有同名笔记：{dest_dir.name}/{title}.md（未改动）"])
+        return out
+    if dry_run:
+        out.update(ok=True, action="预览",
+                   report=[f"将{'补充空缺' if exists else '新建'}：{dest_dir.name}/{title}.md"
+                           f"（类型：{t}，模板：{resolve_template(cfg, t)[1]}）"])
+        return out
+    if not dest_dir.is_dir():
+        # **只检查、不创建**：要建目录得用户点②页「📁 按映射创建/检查目录」
+        out["report"].append(
+            f"目录不存在「{dest_dir.name}」；请到②页点「📁 按映射创建/检查目录」，"
+            f"或在②页改正映射")
+        return out
+    r = write_note(cfg, t, title, str(summary or ""), {}, OrderedDict(),
+                   mode=("auto" if exists else "create"))
+    out.update(ok=bool(r.get("ok")), action=r.get("action") or "",
+               path=str(r.get("path") or path),
+               report=out["report"] + [str(x) for x in (r.get("report") or [])])
+    return out
+
+
+def create_skeleton_notes(cfg: dict, keywords, type_: str = "", target_dir: str = "",
+                          dry_run: bool = True, overwrite: bool = False,
+                          limit: int = 0, on_progress=None) -> dict:
+    """批量建骨架。keywords 可以是多行文本或列表，每行支持 `类型:名称`。"""
+    items = parse_keyword_lines(keywords, default_type=type_, default_dir=target_dir)
+    if limit:
+        items = items[:limit]
+    created, skipped, failed, detail = [], [], [], []
+    for i, it in enumerate(items, 1):
+        r = create_skeleton_note(cfg, it["name"], it["type"] or type_,
+                                 it["dir"] or target_dir, dry_run=dry_run,
+                                 overwrite=overwrite)
+        line = (f"{it['name']} → {r.get('action')}"
+                f"（{r.get('dir') or '—'}｜类型：{r.get('type') or '—'}）")
+        detail.append(line)
+        if not r.get("ok"):
+            failed.append(it["name"])
+        elif r.get("action") in ("新建", "增量更新", "预览"):
+            created.append(f"{r.get('dir')}/{it['name']}")
+        else:
+            skipped.append(it["name"])
+        if callable(on_progress):
+            try:
+                on_progress(i, len(items), line)
+            except Exception:
+                pass
+    return {"ok": not failed, "total": len(items), "created": created, "skipped": skipped,
+            "failed": failed, "report": detail, "dry_run": dry_run}
+
+
+def link_keywords(cfg: dict, path: Path, dry_run: bool = True, first_only: bool = True,
+                  skip_headings: bool = True, max_links: int = 80,
+                  only_resolved: bool = True) -> dict:
+    """给**一篇**笔记补正文关键词双链（dry_run 默认只预览，不写盘）。
+
+    返回 {ok, path, action, added, report, text}
+    """
+    path = Path(path)
+    out = {"ok": False, "path": str(path), "action": "", "added": [], "report": [], "text": ""}
+    if not path.is_file():
+        out["report"].append(f"文件不存在：{path}")
+        return out
+    index = build_link_index(cfg, only_resolved=only_resolved)
+    skip = link_skip_words(cfg) | note_own_names(cfg, path)
+    text = path.read_text(encoding="utf-8")
+    new_text, added = link_keywords_in_text(text, index, self_title=path.stem,
+                                            first_only=first_only,
+                                            skip_headings=skip_headings, max_links=max_links,
+                                            skip_titles=skip,
+                                            link_map=link_map_from_index(index))
+    out.update(ok=True, added=added, text=new_text)
+    if not added:
+        out.update(action="无改动", report=["正文里没有可补双链的词条（或已全部链过）"])
+        return out
+    out["report"] = [f"新增双链 {len(added)} 个：" + "、".join(f"[[{a}]]" for a in added[:12])
+                     + ("…" if len(added) > 12 else "")]
+    if dry_run:
+        out["action"] = "预览"
+        return out
+    if new_text.strip() == text.strip():
+        out.update(action="无改动", report=out["report"] + ["内容没有变化，未写盘"])
+        return out
+    dest = backup_note(path, resolve_kb(cfg))
+    if dest is not None:
+        try:
+            rel = dest.relative_to(backup_root(create=False))
+        except Exception:
+            rel = Path(dest.name)
+        out["report"].append(f"旧版已备份：{BACKUP_DIR_NAME}/{rel}")
+    write_text_keep_eol(path, new_text)
+    out["action"] = "已补双链"
+    return out
+
+
+LINK_AI_PROMPT = """请从下面这段历史笔记正文里找出所有**专有名词**，只输出 JSON：
+{{"entities": ["…", "…"]}}
+
+要求：
+1. 只列**正文里逐字出现过**的词（照抄原文写法，不要改写、不要补充正文里没有的）；
+2. 专名优先：历史人物、历史事件、战争/战役、政变、起义、运动、党派/军队/组织、
+   条约/协定/文件、会议、制度/政策、地名/据点、报刊/著作；
+   **不要**列普通名词（如「军队」「政府」「时间」这类泛称）；
+3. **同一实体只列一个最通行、最完整的名称**：不要同时列出「中东路」「中东铁路」「中东路战争」
+   这种同一回事的不同写法；也不要把「某会议」和它通过的「议定书」当成两个实体；
+4. 最多 {max_n} 条；不要解释、不要 Markdown 围栏。
+
+正文：
+{body}
+"""
+
+
+def ai_client_from_config(cfg: dict, timeout: int = 300):
+    """按 config.json 的 ai 节点建一个 AIClient；没配 API Key 时返回 None。"""
+    from ai_client import AIClient
+
+    ai = (cfg or {}).get("ai") or {}
+    if not str(ai.get("api_key") or "").strip():
+        return None
+    try:
+        return AIClient(ai.get("base_url") or "https://api.deepseek.com/v1",
+                        str(ai.get("api_key") or ""), ai.get("model") or "deepseek-chat",
+                        float(ai.get("temperature", 0.3) or 0.3), timeout=timeout,
+                        max_tokens=int(ai.get("max_tokens", 8000) or 8000))
+    except Exception:
+        return None
+
+
+def ai_entity_names(cfg: dict, text: str, client=None, max_n: int = 80) -> list:
+    """让 AI 从正文里挑专有名词。**逐字校验**：正文里没出现过的一律丢掉（防编造）。"""
+    client = client or ai_client_from_config(cfg)
+    if client is None:
+        return []
+    body = (split_frontmatter(text)[1] or text)[:8000]
+    try:
+        obj = client.analyze_topic(LINK_AI_PROMPT.format(max_n=max_n, body=body))
+    except Exception:
+        return []
+    raw = obj.get("entities") if isinstance(obj, dict) else obj
+    if isinstance(raw, str):
+        raw = [raw]
+    flat = re.sub(r"\s+", "", text or "")
+    out, seen = [], set()
+    for x in (raw or []):
+        name = str(x).strip().strip("《》\"'“”（）()[]【】·,，。 ")
+        if len(name) < 2 or name in seen:
+            continue
+        if re.sub(r"\s+", "", name) not in flat:      # 正文里没有 → AI 编造，丢掉
+            continue
+        seen.add(name)
+        out.append(name)
+        if len(out) >= max_n:
+            break
+    return out
+
+
+def appears_linkable(text: str, name: str) -> bool:
+    """这个名字是否出现在"可链区域"（参考资料/引用/署名行等都不算）。"""
+    if not name:
+        return False
+    fields, body = split_frontmatter(text)
+    body = body if fields is not None else text
+    cur = ""
+    for line in (body or "").splitlines():
+        s = line.strip()
+        if s.startswith("#"):
+            cur = section_clean_name(s)
+            continue
+        if any(k in cur for k in LINK_SKIP_SECTION_PARTS):
+            continue
+        if LINK_SKIP_LINE_RE.search(line):
+            continue
+        if name in line:
+            return True
+    return False
+
+
+def link_keywords_ai(cfg: dict, path: Path, client=None, dry_run: bool = True,
+                     red_links: bool = True, first_only: bool = True,
+                     skip_headings: bool = True, max_links: int = 80,
+                     max_red: int = 12) -> dict:
+    """用 AI 识别正文里的**专有名词**再补双链（比本地规则强：通称、异名、库里还没有的专名）。
+
+    * AI 只负责挑名字，且每个名字都要求**在正文里逐字出现**（防止编造）；
+    * 网站/许可/期刊名（维基百科、Wikimedia、Public domain…）不当双链目标；
+      参考资料/引用/延伸阅读小节与图片署名行一律不链；
+    * 能对上库内词条（含年份前缀变体/别名）→ 写成 `[[真实词条名|正文写法]]`，保证 Obsidian 能解析；
+    * 对不上库内词条 → 按 `max_red` 取**正文里出现次数最多**的若干个写成 `[[名字]]`（待建链接），
+      其余只在报告清单里列出（避免一篇笔记被几十个红链淹没）。
+    返回 {ok, path, action, added, red, report, text, entities}
+    """
+    path = Path(path)
+    out = {"ok": False, "path": str(path), "action": "", "added": [], "red": [],
+           "report": [], "text": "", "entities": []}
+    if not path.is_file():
+        out["report"].append(f"文件不存在：{path}")
+        return out
+    text = path.read_text(encoding="utf-8")
+    names = [n for n in ai_entity_names(cfg, text, client)
+             if not any(b in n for b in LINK_BOILERPLATE)]
+    if not names:
+        out.update(ok=True, action="无改动",
+                   report=["AI 没有识别出专名（未配置 API Key、调用失败，或正文太短）"])
+        return out
+    out["entities"] = names
+    index = build_link_index(cfg)
+    own = note_own_names(cfg, path)
+    by_name: dict = {}
+    for name, _d, real in sorted(index, key=lambda x: -len(x[0])):   # 变体写法 → 真实词条名
+        by_name.setdefault(name, real or name)
+    link_map, red_all = {}, []
+    for nm in names:
+        if nm in own or any(b in nm for b in LINK_BOILERPLATE):
+            continue
+        target = by_name.get(nm)
+        if target is None:                            # 再按包含关系兜一次（九一八事变 ↔ 1931年-九一八事变）
+            for cand, real in by_name.items():
+                if len(nm) >= 3 and (nm in cand or cand in nm):
+                    target = real
+                    break
+        if target:
+            link_map[nm] = f"[[{target}]]" if target == nm else f"[[{target}|{nm}]]"
+        else:
+            red_all.append(nm)
+    # 待建清单只保留"正文里真出现过"的（参考资料里的出版社/作者名不算）
+    red_all = [n for n in red_all if appears_linkable(text, n)]
+    # 待建链接限流：按"正文出现次数"排序；同一实体的多种写法（互相包含）只留一个
+    red_sorted = sorted(set(red_all), key=lambda n: (-text.count(n), -len(n)))
+    picked: list = []
+    for nm in red_sorted:
+        core_nm = name_core(nm)
+        if any(nm in k or k in nm or (len(core_nm) >= 2 and core_nm == name_core(k))
+               for k in picked):
+            continue                                  # 中东路 / 中东路战争 / 中东铁路 只留最常见的那一个
+        picked.append(nm)
+        if max_red > 0 and len(picked) >= max_red:
+            break
+    red = picked
+    skipped_red = [n for n in red_sorted if n not in picked]
+    if red_links:
+        for nm in red:
+            link_map[nm] = f"[[{nm}]]"
+    if not link_map:
+        out.update(ok=True, action="无改动", report=["识别出的专名都已链过、或都属于本条目自身"],
+                   red=red_sorted)
+        return out
+    skip = link_skip_words(cfg) | own
+    new_text, added = link_keywords_in_text(text, index, self_title=path.stem,
+                                            first_only=first_only,
+                                            skip_headings=skip_headings, max_links=max_links,
+                                            skip_titles=skip, link_map=link_map)
+    out.update(ok=True, added=added, red=red_sorted, text=new_text)
+    rep = [f"AI 识别专名 {len(names)} 个 → 新增双链 {len(added)} 个"]
+    if red_sorted:
+        rep.append(f"库内暂无对应词条（共 {len(red_sorted)} 个）："
+                   + "、".join(red_sorted[:10]) + ("…" if len(red_sorted) > 10 else ""))
+        if skipped_red:
+            rep.append(f"其中 {len(skipped_red)} 个出现次数少，只在清单里、未写红链"
+                       + ("（用 --max-red / max_red 可调）" if red_links else ""))
+    out["report"] = rep
+    if dry_run:
+        out["action"] = "预览"
+        return out
+    if new_text.strip() == text.strip():
+        out.update(action="无改动", report=rep + ["内容没有变化，未写盘"])
+        return out
+    dest = backup_note(path, resolve_kb(cfg))
+    if dest is not None:
+        try:
+            rel = dest.relative_to(backup_root(create=False))
+        except Exception:
+            rel = Path(dest.name)
+        out["report"].append(f"旧版已备份：{BACKUP_DIR_NAME}/{rel}")
+    write_text_keep_eol(path, new_text)
+    out["action"] = "已补双链（AI 专名）"
+    return out
+
+
+def link_keywords_batch(cfg: dict, dry_run: bool = True, limit: int = 0,
+                        first_only: bool = True, skip_headings: bool = True,
+                        max_links: int = 80, on_progress=None,
+                        only_resolved: bool = True) -> dict:
+    """全库批量补正文关键词双链（dry_run 默认只统计，不写盘）。
+
+    返回 {ok, files, changed, links, details:[{title, dir, added:[…]}], report, index}
+    """
+    index = build_link_index(cfg, only_resolved=only_resolved)
+    pattern = compile_link_pattern(index)
+    generic_skip = link_skip_words(cfg)
+    lmap = link_map_from_index(index)
+    notes = list_notes(cfg)                          # 不再自动重建词表：要更新请显式跑 --rebuild-terms
+    if limit:
+        notes = notes[:limit]
+    out = {"ok": True, "files": len(notes), "changed": 0, "links": 0,
+           "details": [], "report": [], "index": len(index)}
+    for i, n in enumerate(notes, 1):
+        p = Path(n["path"])
+        try:
+            text = p.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        new_text, added = link_keywords_in_text(text, index, self_title=p.stem,
+                                                first_only=first_only,
+                                                skip_headings=skip_headings,
+                                                max_links=max_links, pattern=pattern,
+                                                skip_titles=generic_skip | note_own_names(cfg, p),
+                                                link_map=lmap)
+        if on_progress:
+            try:
+                on_progress(i, len(notes), n)
+            except Exception:
+                pass
+        if not added:
+            continue
+        out["changed"] += 1
+        out["links"] += len(added)
+        out["details"].append({"title": n["title"], "dir": n["dir"], "added": added})
+        if not dry_run and new_text.strip() != text.strip():
+            backup_note(p, resolve_kb(cfg))
+            write_text_keep_eol(p, new_text)
+    out["report"].append(f"{'可补' if dry_run else '已补'}双链：{out['changed']} 篇、"
+                         f"共 {out['links']} 个链接（候选词条 {out['index']} 个）")
+    return out
+
+
+def write_note(cfg: dict, type_: str, title: str, summary: str,
+               ai_fields: dict, ai_sections: OrderedDict,
+               mode: str = "auto",
+               images: list | None = None, auto_images: bool = True) -> dict:
+    """
+    类型路由 → 目录 → 创建 / 增量更新。
+    mode: auto（存在则更新）/ create（强制新建）/ update（仅更新已存在）。
+    返回 {ok, path, action, report:[...]}。
+    绝不覆盖用户已有内容：只填空、只新增缺失小节。
+    """
+    ai_sections = normalize_sections_input(ai_sections)
+    title = sanitize_title(title)
+    type_, alias_note = resolve_type_alias(cfg, type_)
+    if type_ == "时间线":
+        title = ensure_timeline_title(title, ai_fields.get("年份") or ai_fields.get("时间") or "")
+    dirpath, status = resolve_route_dir(cfg, type_)
+    result = {"ok": False, "path": "", "action": "", "report": ([alias_note] if alias_note else [])}
+    if dirpath is None:
+        # 兜底只给提示：**绝不自动创建目录**（要建目录得用户点②页「📁 按映射创建/检查目录」）
+        want = str((cfg.get("routes") or {}).get(type_) or "").strip()
+        if not want:
+            t2, _alias = resolve_type_alias(cfg, type_)
+            want = str((cfg.get("routes") or {}).get(t2) or "").strip()
+        where = want or type_
+        result["report"].append(
+            f"路由失败：目录不存在「{where}」；请到②页点「📁 按映射创建/检查目录」，"
+            f"或在②页改正映射")
+        return result
+    if not dirpath.is_dir():
+        result["report"].append(
+            f"路由失败：目录不存在「{dirpath}」；请到②页点「📁 按映射创建/检查目录」，"
+            f"或在②页改正映射")
+        return result
+    target = dirpath / f"{title}.md"
+    report: list[str] = []
+    note_text = None
+    if target.exists() and mode != "create":
+        # 增量更新：只填空值、只补缺失小节，绝不覆盖已有内容
+        text = merge_into_existing(cfg, target, type_, title, ai_fields, ai_sections,
+                                   report, images=images, auto_images=auto_images)
+        dest = backup_note(target, resolve_kb(cfg))          # 改写前备份（每个文件只留最新一份）
+        if dest is not None:
+            try:
+                rel = dest.relative_to(backup_root(create=False))
+            except Exception:
+                rel = Path(dest.name)
+            report.append(f"旧版已备份：{BACKUP_DIR_NAME}/{rel}")
+        write_text_keep_eol(target, text)
+        result.update(ok=True, path=str(target), action="增量更新", report=report)
+        return result
+    if mode == "update":
+        result["report"].append(f"未找到目标笔记，跳过更新：{title}.md")
+        return result
+    # 新建
+    text, note = build_note_text(cfg, type_, title, summary, ai_fields, ai_sections, report,
+                                 images=images, auto_images=auto_images)
+    if not str(text or "").strip():                          # 没模板 → 明确失败，不写空笔记
+        result["report"].append(note or TEMPLATE_MISSING_HINT.format(t=type_))
+        return result
+    others = [p for p in find_note_paths(cfg, title) if p != target]
+    for other in others:                                     # 同名笔记在别的目录：提醒一下
+        report.append(f"⚠ 同名笔记已存在：{other.parent.name}/{other.name}"
+                      f"（本次写入的是 {target.parent.name}/）")
+    write_text_keep_eol(target, text)
+    result.update(ok=True, path=str(target), action="新建", report=[f"新建笔记：{target.name}（模板：{note}）"] + report)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 词条配图：本地图库优先，可选从中文维基百科取图（带作者/许可署名）
+#   图片统一放 Assets（图片地图）/；首图紧跟 H1，第二张起放 `## 🖼️ 相关图片`。
+# ---------------------------------------------------------------------------
+
+ASSET_DIR_CANDIDATES = ("Assets（图片地图）", "Assets", "assets", "图片", "附件", "Attachments（PDF）")
+IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg")
+IMAGE_SECTION_TITLE = "🖼️ 相关图片"
+DISPUTE_MARK = "⚖️ 争议说明"          # 争议内容的统一写法（所有词条适用，见格式规范）
+IMAGE_UA = "MinguoKB/1.0 (local markdown note tool)"
+WIKI_SUMMARY_API = "https://zh.wikipedia.org/api/rest_v1/page/summary/"
+COMMONS_API = "https://commons.wikimedia.org/w/api.php"
+
+
+def image_assets_dir(cfg: dict, create: bool = False) -> Path | None:
+    """图片目录：知识库里的 Assets（图片地图）/（不存在时只有 create=True 才新建）。"""
+    kb = resolve_kb(cfg)
+    if kb is None:
+        return None
+    for name in ASSET_DIR_CANDIDATES:
+        p = kb / name
+        if p.is_dir():
+            return p
+    if not create:
+        return None
+    p = kb / ASSET_DIR_CANDIDATES[0]
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+    except Exception:
+        return None
+
+
+def build_image_index(cfg: dict) -> list:
+    """扫描知识库里所有图片（跳过模板目录），供配图匹配复用。"""
+    kb = resolve_kb(cfg)
+    if kb is None:
+        return []
+    index = []
+    for p in kb.rglob("*"):
+        try:
+            if not p.is_file() or p.suffix.lower() not in IMAGE_EXTS:
+                continue
+        except OSError:
+            continue
+        if any(part in ("Templates（模板）", "Templates", "模板") for part in p.parts):
+            continue
+        index.append({"file": p.name, "path": str(p), "stem": p.stem.strip()})
+    return index
+
+
+def match_images(index: list, title: str, aliases=(), min_score: int = 0) -> list:
+    """按文件名给词条匹配图片：同名 100 分 > 前缀 70 > 包含 50（别名依次递减）。
+
+    min_score=70 时只认「同名 / 前缀」，避免事件条目（`1881年-袁世凯投身淮军`）
+    被人物肖像（`袁世凯.jpg`）的弱包含命中。
+    """
+    keys = [sanitize_title(title)] + [sanitize_title(a) for a in (aliases or ()) if str(a).strip()]
+    keys = [k for k in keys if k]
+    scored = []
+    for item in index or []:
+        stem = str(item.get("stem") or "").strip()
+        if not stem:
+            continue
+        score = 0
+        hit_key = ""
+        for i, key in enumerate(keys):
+            if stem == key:
+                score, hit_key = max(score, 100 - i), key
+            elif stem.startswith(key) or key.startswith(stem):
+                if (70 - i) > score:
+                    score, hit_key = 70 - i, key
+            elif key in stem:
+                if (50 - i) > score:
+                    score, hit_key = 50 - i, key
+        if score and score >= max(0, int(min_score)):     # score 为 0 = 没匹配上，必须排除
+            scored.append(dict(item, score=score, key=hit_key, source="本地图库"))
+    scored.sort(key=lambda x: (-x["score"], x["file"]))
+    seen, uniq = set(), []
+    for item in scored:
+        if item["file"] in seen:
+            continue
+        seen.add(item["file"])
+        uniq.append(item)
+    return uniq[:6]
+
+
+def find_local_images(cfg: dict, title: str, aliases=()) -> list:
+    """在知识库里给词条找本地图片。"""
+    return match_images(build_image_index(cfg), title, aliases)
+
+
+def _http_json(url: str, timeout: int = 15, retries: int = 2) -> dict:
+    """请求 JSON：遇到限流/网络抖动自动退避重试（维基对并发很敏感）。"""
+    import time as _time
+    last = None
+    for attempt in range(max(0, retries) + 1):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": IMAGE_UA})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except Exception as exc:                      # 429/5xx/超时都退避重试
+            last = exc
+            if attempt < retries:
+                _time.sleep(1.5 * (attempt + 1))
+    raise last if last else RuntimeError("请求失败")
+
+
+def fetch_wiki_image(title: str, timeout: int = 15, width: int = 1000) -> dict | None:
+    """中文维基条目首图 + Wikimedia Commons 的作者/许可。取不到返回 None，绝不抛异常。
+
+    默认取 `width` 宽的缩略图（1000px 足够看，别把几 MB 的原图塞进知识库）。
+    """
+    name = sanitize_title(title)
+    thumb_url = pageimage = page_url = ""
+    try:
+        api = ("https://zh.wikipedia.org/w/api.php?action=query&format=json&prop=pageimages"
+               f"&piprop=thumbnail|name&pithumbsize={int(width)}&titles=" + urllib.parse.quote(name))
+        pages = (_http_json(api, timeout).get("query") or {}).get("pages") or {}
+        for _pid, page in pages.items():
+            thumb_url = ((page.get("thumbnail") or {}).get("source") or "")
+            pageimage = str(page.get("pageimage") or "")
+            break
+    except Exception:
+        pass
+    if not thumb_url:                                   # 兜底：REST 摘要接口
+        try:
+            summary = _http_json(WIKI_SUMMARY_API + urllib.parse.quote(name), timeout)
+        except Exception:
+            return None
+        thumb_url = ((summary.get("thumbnail") or {}).get("source")
+                     or (summary.get("originalimage") or {}).get("source") or "")
+        page_url = ((summary.get("content_urls") or {}).get("desktop") or {}).get("page", "")
+        if not pageimage:
+            pageimage = urllib.parse.unquote(urllib.parse.urlparse(thumb_url).path.rsplit("/", 1)[-1])
+    if not thumb_url:                                   # 兜底2：搜索条目（消歧义页没有首图，如「丘吉尔」）
+        try:
+            api = ("https://zh.wikipedia.org/w/api.php?action=query&format=json&generator=search"
+                   f"&gsrsearch={urllib.parse.quote(name)}&gsrlimit=1&prop=pageimages"
+                   f"&piprop=thumbnail|name&pithumbsize={int(width)}")
+            pages = (_http_json(api, timeout).get("query") or {}).get("pages") or {}
+            for _pid, page in pages.items():
+                thumb_url = ((page.get("thumbnail") or {}).get("source") or "")
+                pageimage = str(page.get("pageimage") or "")
+                break
+        except Exception:
+            pass
+    if not thumb_url:
+        return None
+    if thumb_url.startswith("//"):
+        thumb_url = "https:" + thumb_url
+    pageimage = re.sub(r"^\d+px-", "", pageimage).strip()     # 缩略图名去掉宽度前缀
+    ext = Path(urllib.parse.urlparse(thumb_url).path).suffix.lower() or ".jpg"
+    info = {"url": thumb_url, "file": pageimage, "ext": ext, "license": "", "artist": "",
+            "page": page_url or ("https://zh.wikipedia.org/wiki/" + urllib.parse.quote(name))}
+    try:
+        api = (COMMONS_API + "?action=query&format=json&prop=imageinfo&iiprop=url|extmetadata&titles="
+               + urllib.parse.quote("File:" + pageimage))
+        pages = (_http_json(api, timeout).get("query") or {}).get("pages") or {}
+        for _pid, detail in pages.items():
+            meta = ((detail.get("imageinfo") or [{}])[0].get("extmetadata") or {})
+            pick = lambda k: str((meta.get(k) or {}).get("value", ""))
+            info["license"] = html.unescape(re.sub(r"<[^>]+>", "", pick("LicenseShortName"))).strip()
+            artist = urllib.parse.unquote(urllib.parse.unquote(pick("Artist")))
+            artist = html.unescape(re.sub(r"<[^>]+>", " ", artist))
+            artist = re.sub(r"\[\d+\]", "", artist)        # 去掉维基脚注标记 [1]
+            info["artist"] = re.sub(r"\s{2,}", " ", artist).strip()
+            break
+    except Exception:
+        pass
+    return info
+
+
+def download_image(url: str, dest: Path, timeout: int = 40) -> bool:
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": IMAGE_UA})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = resp.read()
+        if not data:
+            return False
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+        return True
+    except Exception:
+        return False
+
+
+def _wiki_query_candidates(title: str, aliases=()) -> list:
+    """维基检索词候选：原题名 → 去掉年份/序号前缀 → 别名。
+
+    例：`1911年-辛亥革命` → `辛亥革命`；`03 北洋系` → `北洋系`。
+    """
+    out = []
+    for raw in [title] + list(aliases or ()):
+        name = sanitize_title(str(raw))
+        if not name:
+            continue
+        if name not in out:
+            out.append(name)
+        stripped = re.sub(r"^\d{1,4}\s*年?\s*[-—–－]\s*", "", name).strip()
+        if stripped and stripped not in out:
+            out.append(stripped)
+    return out
+
+
+def acquire_image(cfg: dict, title: str, aliases=(), allow_network: bool = True) -> dict:
+    """给词条找配图：本地图库优先；没有再（allow_network）从维基百科下载进 Assets（图片地图）。
+
+    返回 {ok, file, path, source, credit, note}；失败只给 note，不抛异常。
+    """
+    # 本地匹配只要「同名 / 前缀」（≥70 分）：弱包含（袁世凯.jpg ↔ 1882年-壬午兵变）
+    # 会让事件条目抢用人物肖像，这里宁可交给联网按标题取名的新图
+    local = find_local_images(cfg, title, aliases)
+    local = [x for x in local if x.get("score", 0) >= 70]
+    if local:
+        entry = dict(local[0])
+        matched = str(entry.get("key") or "")
+        if matched and matched != sanitize_title(title):
+            # 命中的是词条里链接的实体（如 1928年-东北易帜 → 张学良.jpg）：署名里写明
+            entry["credit"] = f"本地图库（词条内链接：{matched}）"
+        entry.update(ok=True, source="本地图库", note=f"本地图库已有：{entry['file']}")
+        return entry
+    if not allow_network:
+        return {"ok": False, "note": "本地图库没有匹配图片（联网取图已关闭）"}
+    info = None
+    used = ""
+    for candidate in _wiki_query_candidates(title, aliases):
+        info = fetch_wiki_image(candidate)
+        if info:
+            used = candidate
+            break
+    if not info:
+        return {"ok": False, "note": f"维基百科没有查到「{title}」的图片（可手动把图片放进 Assets（图片地图））"}
+    target_dir = image_assets_dir(cfg, create=True)
+    if target_dir is None:
+        return {"ok": False, "note": "知识库未设置或无法创建图片目录"}
+    ext = str(info.get("ext") or Path(info["file"]).suffix.lower() or ".jpg")
+    dest = target_dir / f"{sanitize_title(title)}{ext}"
+    if not dest.exists() and not download_image(info["url"], dest):
+        return {"ok": False, "note": f"图片下载失败：{info['url'][:70]}"}
+    credit = " · ".join(part for part in (
+        f"中文维基百科 / Wikimedia Commons（条目：{used}）" if used else "中文维基百科 / Wikimedia Commons",
+        f"作者：{info['artist']}" if info.get("artist") else "",
+        f"许可：{info['license']}" if info.get("license") else "",
+    ) if part)
+    return {"ok": True, "file": dest.name, "path": str(dest), "source": "维基百科",
+            "credit": credit, "page": info.get("page", ""),
+            "author": info.get("artist", ""), "license": info.get("license", ""),
+            "note": f"已下载：{dest.name}（{credit}）"}
+
+
+def image_block(entry: dict) -> list:
+    """一张图的正文两行：`![[文件名]]` + `> 图片来源：…`。"""
+    file = str(entry.get("file") or "").strip()
+    if not file:
+        return []
+    lines = [f"![[{file}]]"]
+    credit = str(entry.get("credit") or "").strip()
+    source = str(entry.get("source") or "").strip()
+    if credit:
+        lines.append(f"> 图片来源：{credit}")
+    elif source:
+        lines.append(f"> 图片来源：{source}")
+    return lines
+
+
+def _split_raw(text: str) -> tuple:
+    """拆成 (frontmatter 原文, 正文)——保留原文格式，绝不重新序列化 frontmatter。"""
+    lines = text.replace("\r\n", "\n").split("\n")
+    if lines and lines[0].strip() == "---":
+        for i in range(1, len(lines)):
+            if lines[i].strip() == "---":
+                return "\n".join(lines[:i + 1]), "\n".join(lines[i + 1:])
+    return "", text
+
+
+def insert_images(text: str, entries: list) -> str:
+    """配图写进笔记：首图紧跟 H1，第二张起放 `## 🖼️ 相关图片`（页脚之前）。重复调用不会重复插图。"""
+    entries = [e for e in (entries or []) if str(e.get("file") or "").strip()]
+    if not entries:
+        return text
+    head, body = _split_raw(text)
+    missing = [e for e in entries if f"![[{e['file']}]]" not in body]
+    if not missing:
+        return text
+    lines = body.split("\n")
+    h1 = next((i for i, ln in enumerate(lines) if re.match(r"^#\s+\S", ln)), None)
+    block = image_block(missing[0])
+    if block:
+        at = (h1 + 1) if h1 is not None else 0
+        while at < len(lines) and not lines[at].strip():
+            at += 1
+        lines[at:at] = block + [""]
+        missing = missing[1:]
+    if missing:
+        block = [f"## {IMAGE_SECTION_TITLE}", ""]
+        for entry in missing:
+            block.extend(image_block(entry))
+            block.append("")
+        while block and not block[-1].strip():
+            block.pop()
+        # 定位页脚分隔线（---），新小节插在它前面；空行按 §1-5 补一个
+        sep = None
+        for i in range(len(lines) - 1, -1, -1):
+            if lines[i].strip().startswith(("**关联**", "**关联模块**")):
+                j = i - 1
+                while j >= 0 and not lines[j].strip():
+                    j -= 1
+                if j >= 0 and lines[j].strip() == "---":
+                    sep = j
+                break
+        at = sep if sep is not None else len(lines)
+        while at > 0 and not lines[at - 1].strip():
+            at -= 1
+        if sep is not None and sep > at:
+            del lines[at:sep]                       # 收掉原有空行，下面统一补
+        lines[at:at] = [""] + block + [""]
+    new_body = "\n".join(lines)
+    if head:
+        return head + "\n" + new_body
+    return new_body
+
+
+def _image_entries(cfg: dict, title: str, fields: dict, images, auto_images: bool) -> list:
+    if images is not None:
+        return list(images)
+    if not auto_images:
+        return []
+    aliases = fields.get("aliases") if isinstance(fields, dict) else None
+    return find_local_images(cfg, title, aliases or [])
+
+
+# ---------------------------------------------------------------------------
+# 粘贴导入：整段内容丢进来 → 首行认类型/标题 → 套模板 → 本地化图片 → 自动分发写入
+#   不限文字（长文/表格/代码块原样保留），图片支持 ![](url)、<img src>、![[文件]]。
+# ---------------------------------------------------------------------------
+
+MD_IMG_RE = re.compile(r"!\[([^\]]*)\]\(\s*([^)\s]+)(?:\s+\"[^\"]*\")?\s*\)")
+HTML_IMG_RE = re.compile(r"<img[^>]*?src=[\"']([^\"']+)[\"'][^>]*>", re.I)
+IMG_EXT_FALLBACK = ".png"
+
+
+def _looks_like_caption(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return False
+    if re.fullmatch(r"[\w\-.]+\.(?:png|jpe?g|gif|webp|svg|bmp)", t, re.I):
+        return False
+    return True
+
+
+def _localize_image(cfg: dict, assets: Path, src: str, title: str, index: int) -> str:
+    """把一张图落到 Assets（图片地图）/，返回文件名；失败返回空串。"""
+    src = (src or "").strip().strip("<>")
+    if not src:
+        return ""
+    if src.startswith(("http://", "https://")):
+        path_part = urllib.parse.urlparse(src).path
+        ext = Path(path_part).suffix.lower()
+        if ext not in IMAGE_EXTS:
+            ext = IMG_EXT_FALLBACK
+        # 复用已下载的同名图
+        stem_base = sanitize_title(Path(urllib.parse.unquote(path_part)).stem)[:40] or "图片"
+        name = f"{stem_base}{ext}"
+        dest = assets / name
+        if dest.exists():
+            return dest.name
+        if download_image(src, dest):
+            return dest.name
+        fallback = f"{sanitize_title(title)}-{index}{ext}"
+        if download_image(src, assets / fallback):
+            return fallback
+        return ""
+    # 本地文件：拷进图库（已经在图库里的直接用）
+    p = Path(src)
+    if p.is_file():
+        try:
+            if assets.resolve() in p.resolve().parents:
+                return p.name
+        except Exception:
+            pass
+        ext = p.suffix.lower() if p.suffix.lower() in IMAGE_EXTS else IMG_EXT_FALLBACK
+        name = p.name
+        if (assets / name).exists():
+            name = f"{sanitize_title(title)}-{index}{ext}"
+        try:
+            shutil.copy2(p, assets / name)
+            return name
+        except Exception:
+            return ""
+    return ""
+
+
+def import_markdown_images(cfg: dict, text: str, title: str) -> tuple:
+    """把正文里的网络/本地图片存进 Assets（图片地图），并改写成 Obsidian 的 ![[文件名]]。
+
+    返回 (新文本, 报告行列表)。失败的图片保持原样，只记一行说明。
+    """
+    assets = image_assets_dir(cfg, create=True)
+    if assets is None:
+        return text, []
+    report: list = []
+    counter = {"n": 0}
+
+    def repl(match):
+        counter["n"] += 1
+        alt, src = match.group(1), match.group(2)
+        name = _localize_image(cfg, assets, src, title, counter["n"])
+        if not name:
+            report.append(f"图片未能本地化，保持原样：{src[:70]}")
+            return match.group(0)
+        report.append(f"图片已入库：{name}")
+        lines = [f"![[{name}]]"]
+        if _looks_like_caption(alt):
+            lines.append(f"> 图片：{alt.strip()}")
+        return "\n".join(lines)
+
+    new_text = MD_IMG_RE.sub(repl, text)
+    new_text = HTML_IMG_RE.sub(lambda m: repl(_FakeMatch(m.group(1))), new_text)
+    return new_text, report
+
+
+class _FakeMatch:
+    """让 <img src> 与 ![alt](src) 共用同一段处理逻辑。"""
+
+    def __init__(self, src: str):
+        self._src = src
+
+    def group(self, i: int = 0) -> str:
+        if i == 0:
+            return f"![]({self._src})"
+        return "" if i == 1 else self._src
+
+
+def guess_title_from_text(cfg: dict, text: str) -> str:
+    """从粘贴内容里取标题：frontmatter title → 首行（去掉 #、类型前缀、括号类型）。"""
+    fields, body = split_frontmatter(text)
+    if isinstance(fields, dict) and str(fields.get("title") or "").strip():
+        return sanitize_title(str(fields["title"]))
+    routes = list((cfg.get("routes") or {}).keys())
+    type_alt = "|".join(re.escape(t) for t in sorted(routes, key=len, reverse=True)) or "类型"
+    for line in (body or text).splitlines():
+        s = line.strip()
+        if not s or s.startswith("---"):
+            continue
+        s = re.sub(r"^#{1,6}\s*", "", s)
+        s = re.sub(r"^\*\*(.+?)\*\*\s*$", r"\1", s)
+        s = re.sub(rf"^[\[【(（]\s*(?:{type_alt})\s*[\]】)）]\s*", "", s)   # 「[事件] 七七事变」
+        m = re.match(rf"^(?:{type_alt})\s*[：:]\s*(.+)$", s)
+        if m:
+            s = m.group(1)
+        s = re.sub(rf"[（(]\s*(?:{type_alt})\s*[)）]\s*$", "", s)
+        s = s.strip(" 　*#·-")
+        if s:
+            if len(s) > 40:                       # 首行是长句时截到第一个停顿，便于做文件名
+                parts = re.split(r"[。；;，,！!？?]", s, maxsplit=1)
+                s = parts[0].strip() or s[:40]
+            return sanitize_title(s)
+    return ""
+
+
+def guess_type_from_text(cfg: dict, text: str, first_line: str = "") -> tuple:
+    """猜词条类型：① 首行/前几行的类型标记 → ② 各类型模板的小节命中数。返回 (类型, 依据)。"""
+    routes = list((cfg.get("routes") or {}).keys())
+    if not routes:
+        return "通用", "②页没有配置类型映射"
+    head = (first_line or "").strip()
+    if not head:
+        head = next((ln.strip() for ln in (text or "").splitlines() if ln.strip()), "")
+    head_clean = re.sub(r"^#{1,6}\s*", "", head)
+    for key in sorted(routes, key=len, reverse=True):
+        k = re.escape(key)
+        if (re.match(rf"^(?:{k})\s*[：:]", head_clean)
+                or re.search(rf"[\[\(（【]\s*{k}\s*[\]\)）】]", head_clean)
+                or re.search(rf"[（(]\s*{k}\s*[)）]\s*$", head_clean)
+                or re.search(rf"^(?:{k})\s*[-—·|]", head_clean)):
+            return key, f"首行标明了「{key}」"
+    flat = re.sub(r"\s+", "", text or "")
+    scores = {}
+    for key in routes:
+        try:
+            skeleton = template_skeleton(cfg, key)
+        except Exception:
+            continue
+        heads = [label for label, _b in parse_sections(skeleton).values()]
+        hit = 0
+        for h in heads:
+            clean = section_clean_name(header_norm(h))
+            if len(clean) >= 2 and clean in flat:
+                hit += 1
+        if heads and hit:
+            scores[key] = hit
+    if scores:
+        best = max(scores, key=lambda k: (scores[k], len(k)))
+        if scores[best] >= 2:
+            return best, f"正文命中「{best}」模板小节 {scores[best]} 处"
+    # 兜底必须是②页真的有映射的类型，否则写不进去（「通用」只是模板名，不是目录映射键）
+    if "专题" in routes:
+        return "专题", "没看出类型（先按「专题」归档，可在界面上改）"
+    if "通用" in routes:
+        return "通用", "没看出类型（先按「通用」归档，可在界面上改）"
+    return routes[0], f"没看出类型（先按「{routes[0]}」归档，可在界面上改）"
+
+
+def _strip_title_line(text: str, title: str) -> str:
+    """去掉正文里那一行标题（首行且与识别出的标题一致），其余原样保留。"""
+    lines = text.split("\n")
+    out, dropped = [], False
+    for ln in lines:
+        s = ln.strip()
+        if not dropped and s and not s.startswith("---"):
+            candidate = re.sub(r"^#{1,6}\s*", "", s).strip(" 　*#")
+            candidate = re.sub(r"^[\[【(（][^\]】)）]{1,10}[\]】)）]\s*", "", candidate).strip()
+            if title and (candidate.startswith(title) or title.startswith(candidate)):
+                dropped = True
+                continue
+        out.append(ln)
+    return "\n".join(out)
+
+
+def import_entry_from_text(cfg: dict, text: str, type_override: str = "",
+                           title_override: str = "", download_images: bool = True,
+                           mode: str = "auto", dry_run: bool = False,
+                           images: list | None = None) -> dict:
+    """整段粘贴 → 词条：认类型/标题 → 套模板 → 解析小节 → 图片入库 → 写入对应目录。
+
+    * 不限长度：`## / ###` 分段原样保留；模板里没有的小节会作为新小节追加；
+    * 图片：`![](url)`、`<img src>`、本地路径都会存进 Assets（图片地图），改成 `![[文件名]]`；
+    * 类型/标题都可以在界面上覆盖（覆盖后按覆盖的走）；
+    * dry_run=True 只生成预览文本（供界面「识别并预览」用），不写盘。
+    返回 write_note 的结果 + {type, title, why, report}（dry_run 时多给 text/note）。
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return {"ok": False, "report": ["内容是空的"], "type": "", "title": "", "why": "", "images": []}
+    report: list = []
+    fields_raw, _body = split_frontmatter(raw)
+    fields = canonicalize_fields(fields_raw or {}, report)
+
+    first_line = next((ln.strip() for ln in raw.splitlines() if ln.strip()), "")
+    why = ""
+    if type_override.strip():
+        type_, why = type_override.strip(), "界面上指定了类型"
+    elif str(fields.get("type") or "").strip():
+        type_, why = str(fields["type"]).strip(), "内容 frontmatter 里写了 type"
+    else:
+        type_, why = guess_type_from_text(cfg, raw, first_line)
+    type_, alias_note = resolve_type_alias(cfg, type_)
+    if alias_note:
+        report.append(alias_note)
+
+    title = sanitize_title(title_override) if title_override.strip() else guess_title_from_text(cfg, raw)
+    if not title:
+        title = sanitize_title(first_line) or "未命名"
+        report.append("没识别出标题，用首行兜底")
+
+    body = _strip_title_line(raw, title)
+    # frontmatter 已在 fields 里，正文里那段 --- 噪声去掉
+    if body.lstrip().startswith("---"):
+        _f, body = split_frontmatter(body)
+        body = body or ""
+
+    image_entries: list = [e for e in (images or []) if isinstance(e, dict)]
+    image_names: list = [str(e.get("file")) for e in image_entries if str(e.get("file") or "").strip()]
+    if download_images and dry_run:
+        report.append("预览不下载正文图片（点「写入知识库」时才存进 Assets（图片地图））")
+    elif download_images:
+        body, img_report = import_markdown_images(cfg, body, title)
+        report += img_report
+        for line in img_report:
+            if not line.startswith("图片已入库："):
+                continue
+            name = line.split("：", 1)[-1].strip()
+            if name and name not in image_names:
+                image_names.append(name)
+                image_entries.append({"file": name, "source": "正文图片"})
+
+    sections = parse_manual_input(body)
+    if not sections:                                  # 没有 ## 分段：整段塞进模板首个空小节
+        tpl_sections = parse_sections(template_skeleton(cfg, type_))
+        target = next((k for k, v in tpl_sections.items() if is_fillable(v[1])), None)
+        content_lines = [ln for ln in body.splitlines() if ln.strip()]
+        if target and content_lines:
+            sections = OrderedDict({target: [tpl_sections[target][0], content_lines]})
+            report.append(f"内容没有小节标题，整段写入「{tpl_sections[target][0].strip('# ')}」")
+        elif content_lines:
+            report.append("内容是空的（只有标题）")
+
+    summary = str(fields.get("summary") or "").strip() if isinstance(fields, dict) else ""
+    fields = {k: v for k, v in (fields or {}).items() if k not in ("summary",)}
+    if dry_run:
+        existing = find_existing_note(cfg, title, type_)
+        target = Path(existing["path"]) if existing.get("path") else None
+        dirpath, _status = resolve_route_dir(cfg, type_)
+        if dirpath is not None:                       # 目标目录里已有同名笔记 → 这次是"补充整合"
+            cand = dirpath / f"{sanitize_title(title)}.md"
+            if cand.is_file():
+                target = cand
+        if target is not None and target.is_file() and mode != "create":
+            text_out = merge_into_existing(cfg, target, type_, title, fields, sections, report,
+                                           images=image_entries)
+            return {"ok": True, "path": str(target), "action": "增量预览", "type": type_,
+                    "title": title, "why": why, "text": text_out,
+                    "note": f"补充整合 → {target.parent.name}/{target.name}",
+                    "report": report, "images": image_names, "existing": existing,
+                    "summary": summarize_merge(report)}
+        if mode == "update":
+            return {"ok": False, "path": "", "action": "跳过", "type": type_, "title": title,
+                    "why": why, "text": "", "note": "", "report": ["按「只补充已有」模式，"
+                    f"但知识库里没有「{title}」这篇词条 → 不会新建"], "images": image_names,
+                    "existing": existing, "summary": "没有可补充的条目"}
+        text_out, note = build_note_text(cfg, type_, title, summary, fields, sections, report,
+                                         images=image_entries)
+        if not str(text_out or "").strip():              # 用户还没提供模板 → 预览也明确失败
+            return {"ok": False, "path": "", "action": "失败", "type": type_, "title": title,
+                    "why": why, "text": "", "note": "", "images": image_names,
+                    "existing": existing, "report": report + [note],
+                    "summary": note}
+        return {"ok": True, "path": "", "action": "新建预览", "type": type_, "title": title,
+                "why": why, "text": text_out, "note": note, "report": report,
+                "images": image_names, "existing": existing,
+                "summary": "知识库中没有同名条目 → 将新建"}
+    result = write_note(cfg, type_, title, summary, fields, sections, mode=mode,
+                        images=image_entries)
+    result.update({"type": type_, "title": title, "why": why, "images": image_names})
+    result["report"] = report + list(result.get("report") or [])
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 双链：补齐链接 + 反向链接
+# ---------------------------------------------------------------------------
+
+LINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
+
+
+def extract_links(text: str) -> list[str]:
+    return [m.group(1).strip() for m in LINK_RE.finditer(text)]
+
+
+def linkify(text: str, known: list[str]) -> str:
+    """把裸人名/实体名包成 [[名]]（仅当确认为已知笔记名，避免误伤正文）。"""
+    names = sorted([n for n in known if len(n) >= 2], key=len, reverse=True)
+    if not names:
+        return text
+    pattern = re.compile("(" + "|".join(re.escape(n) for n in names) + ")")
+    def repl(m):
+        n = m.group(1)
+        # 已处于 [[]] 内则不重复包裹
+        start = m.start()
+        prefix = text[max(0, start - 2):start]
+        if prefix == "[[":
+            return n
+        return f"[[{n}]]"
+    return pattern.sub(repl, text)
+
+
+def apply_backlinks(cfg: dict, new_title: str, related: list[str], report: list[str]) -> dict:
+    """
+    双链补齐：让已有相关笔记反向挂上 [[新笔记]]。
+    返回 {ok, added:[...], skipped:[...]}。
+    """
+    kb = resolve_kb(cfg)
+    out = {"ok": False, "added": [], "skipped": []}
+    if kb is None:
+        report.append("反向链接跳过：知识库未设置")
+        return out
+    out["ok"] = True
+    related_clean = [re.sub(r"^\[\[|\]\]$", "", x).strip() for x in related]
+    link_targets = sorted({x for x in related_clean if x}, key=len, reverse=True)
+    new_bare = re.sub(r"^\[\[|\]\]$", "", new_title).strip()
+    for md in kb.rglob("*.md"):
+        if any(k in md.parts for k in ("Templates", "模板", "Assets", "Attachments", "附件", "资产")):
+            continue
+        if md.stem == new_bare or md.stem == new_title:
+            continue
+        if md.stem not in link_targets:
+            continue
+        text = md.read_text(encoding="utf-8")
+        if f"[[{new_bare}]]" in text or new_bare in extract_links(text):
+            out["skipped"].append(f"{md.stem}：已存在链接")
+            continue
+        # 找合适的挂载小节
+        lines = text.splitlines()
+        anchor = _find_backlink_anchor(lines)
+        if anchor is None:
+            block = f"## 关联条目\n\n- [[{new_bare}]]\n"
+            head, footer = _split_footer(text)          # 页脚必须留在文件最后（格式规范 §1-11）
+            text = head.rstrip("\n") + "\n\n" + block + (("\n" + footer + "\n") if footer else "")
+            out["added"].append(f"{md.stem}：末尾新增「关联条目」")
+        else:
+            idx = anchor + 1
+            n = idx
+            while n < len(lines) and (not lines[n].strip() or lines[n].strip() in ("-", "[[]]")):
+                n += 1
+            lines.insert(n, f"- [[{new_bare}]]")
+            text = "\n".join(lines)
+            out["added"].append(f"{md.stem}：小节「{lines[anchor].strip('# ')}」挂链")
+        write_text_keep_eol(md, text)
+    return out
+
+
+def _split_footer(text: str) -> tuple[str, str]:
+    """把结尾的 `---` + **关联**：… 页脚与正文分开（页脚固定留在文件最后）。"""
+    lines = text.rstrip("\n").splitlines()
+    for i in range(len(lines) - 1, -1, -1):
+        if lines[i].strip().startswith(("**关联**", "**关联模块**")):
+            j = i - 1
+            while j >= 0 and not lines[j].strip():
+                j -= 1
+            if j >= 0 and lines[j].strip() == "---":
+                return "\n".join(lines[:j]), "\n".join(lines[j:])
+            return "\n".join(lines[:i]), "\n".join(lines[i:])
+    return text.rstrip("\n"), ""
+
+
+def _find_backlink_anchor(lines: list[str]) -> int | None:
+    """找最适合挂反向链接的小节（## 层）。优先关键词命中（含 emoji 模板的章节名）。"""
+    keywords = ("关联人物", "核心人物", "相关人物", "关联事件", "相关事件", "核心事件",
+                "关联组织", "相关组织", "参与的重要", "关键历史事件", "关联时间线",
+                "相关战役", "相关条目", "关系网络", "关键事件参与", "相关院校",
+                "相关组织 / 制度", "相关组织/制度", "关联")
+    level2 = [(i, ln) for i, ln in enumerate(lines) if re.match(r"^## ", ln)]
+    for i, ln in level2:
+        key = re.sub(r"^## ", "", ln)
+        for kw in keywords:
+            if kw in key:
+                return i
+    # 退而求其次：有 [[]] 空占位的章节
+    for i, ln in level2:
+        following = lines[i + 1:i + 6]
+        if any(s.strip() == "[[]]" for s in following):
+            return i
+    return None
+
+
+# ---------------------------------------------------------------------------
+# 知识库检索（离线关键词）
+# ---------------------------------------------------------------------------
+
+def find_notes(cfg: dict, keyword: str, limit: int = 40) -> list[dict]:
+    kb = resolve_kb(cfg)
+    hits = []
+    if kb is None or not keyword.strip():
+        return hits
+    kw = keyword.strip()
+    image_index = build_image_index(cfg)          # 一次扫描，供所有命中复用
+    for md in sorted(kb.rglob("*.md")):
+        if md.stem.startswith("索引"):
+            continue
+        if any(k in md.parts for k in ("Templates", "模板", "Assets", "Attachments", "附件", "资产")):
+            continue
+        score = 0
+        snippet = ""
+        if kw in md.stem:
+            score += 10
+        head = ""
+        try:
+            head = md.read_text(encoding="utf-8")[:3000]
+        except Exception:
+            pass
+        if kw in head:
+            score += 4
+            idx = head.find(kw)
+            snippet = head[max(0, idx - 40):idx + 60].replace("\n", " ").strip()
+        if score:
+            hits.append({"path": str(md), "title": md.stem, "score": score, "snippet": snippet,
+                         "images": match_images(image_index, md.stem)})
+    hits.sort(key=lambda h: (-h["score"], h["title"]))
+    return hits[:limit]
+
+
+# ---------------------------------------------------------------------------
+# 索引
+# ---------------------------------------------------------------------------
+
+def build_index(cfg: dict) -> dict:
+    """
+    重建索引：
+      * 每个内容目录生成「索引.md」（列出该目录全部 .md 笔记，[[标题]] 双链）；
+      * 总索引写入 cfg["index_file"]（默认 00 首页/索引.md，目录不存在则回退根目录/索引.md）。
+    返回 {ok, master, dirs:[...], report:[...]}。
+    """
+    kb = resolve_kb(cfg)
+    result = {"ok": False, "master": "", "dirs": [], "report": []}
+    if kb is None:
+        result["report"].append("知识库未设置")
+        return result
+    rows = scan_kb(kb)
+    master_links = []
+    for r in rows:
+        if r["role"] == "特殊目录":
+            continue
+        d = Path(r["path"])
+        mds = sorted(p for p in d.glob("*.md") if p.stem != "索引")
+        if not mds:
+            continue
+        lines = [f"# 索引 · {d.name}", "", "> 由民国历史知识库自动生成（重建后覆盖）", ""]
+        links = []
+        for p in mds:
+            lines.append(f"- [[{p.stem}]]")
+            links.append(f"- [[{p.stem}]]")
+        write_text_keep_eol(d / "索引.md", "\n".join(lines) + "\n")
+        result["dirs"].append(d.name)
+        master_links.append(f"### {d.name}")
+        master_links.extend(links)
+        master_links.append("")
+
+    rel = (cfg.get("index_file") or INDEX_FILE_DEFAULT).strip()
+    target = kb / rel
+    if not target.parent.exists():
+        target = kb / "索引.md"
+    master = ["# 知识库总索引", "", "> 由民国历史知识库自动生成（重建后覆盖）", ""]
+    master.extend(master_links or ["（暂无内容目录笔记）"])
+    write_text_keep_eol(target, "\n".join(master) + "\n")
+    result.update(ok=True, master=str(target))
+    result["report"].append(f"总索引：{target}")
+    for n in result["dirs"]:
+        result["report"].append(f"目录索引：{n}/索引.md")
+    if not result["dirs"]:
+        result["report"].append("没有可索引的内容目录")
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 统计
+# ---------------------------------------------------------------------------
+
+def kb_stats(cfg: dict) -> dict:
+    kb = resolve_kb(cfg)
+    out = {"ok": False, "root": "", "rows": [], "total": 0, "content_total": 0}
+    if kb is None:
+        return out
+    out["ok"] = True
+    out["root"] = str(kb)
+    total = 0
+    content_total = 0
+    for r in scan_kb(kb):
+        d = Path(r["path"])
+        n = len(list(d.glob("*.md")))
+        total += n
+        if r["role"] == "内容目录":
+            content_total += n
+        out["rows"].append((r["name"], r["role"], n))
+    out["total"] = total
+    out["content_total"] = content_total
+    return out
+
+
+def test_routes(cfg: dict) -> list[dict]:
+    """测试目录：逐类型检查路由是否命中实际目录。返回列表供 UI 展示。"""
+    kb = resolve_kb(cfg)
+    if kb is None:
+        return [{"type": "（知识库未设置）", "target": "-", "ok": False, "note": "请先选择知识库目录"}]
+    rows = []
+    for type_ in sorted((cfg.get("routes") or {}).keys()):
+        target = (cfg.get("routes") or {}).get(type_, "")
+        dp, status = resolve_route_dir(cfg, type_)
+        rows.append({"type": type_, "target": target, "ok": dp is not None, "note": status})
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# AI 分析提示词
+# ---------------------------------------------------------------------------
+
+def _type_section_table(cfg: dict) -> str:
+    """各类型 → 章节标题一览（给 AI 选类型后照抄小节名用，避免小节对不上）。"""
+    lines = []
+    for key in sorted((cfg.get("routes") or {}).keys()):
+        try:
+            heads = [label.strip("# ").strip()
+                     for label, _b in parse_sections(template_skeleton(cfg, key)).values()]
+        except Exception:
+            continue
+        if heads:
+            lines.append("· " + key + "：" + " / ".join(heads))
+    return "\n".join(lines)
+
+
+def _section_shape_hints(body: str) -> list:
+    """从模板骨架里提取「表格小节 / 表单小节」的结构，供 AI 按行名、字段名精确填写。
+
+    例：
+      · ⚖️ 兵力对比（表格：项目 | 进攻方 | 防御方；行：总兵力、指挥官、主要装备）
+      · ⚔️ 元数据（字段：时间、地点、所属战争、结果）
+    """
+    out = []
+    for label, lines in parse_sections(body).values():
+        rows, fields = [], []
+        for raw in lines:
+            s = str(raw).strip()
+            if not s:
+                continue
+            if s.startswith("|") and s.endswith("|"):
+                if set(s) <= set("|-: "):
+                    continue
+                cells = [c.strip() for c in s.strip("|").split("|")]
+                if any(cells):
+                    rows.append(cells)
+                continue
+            m = re.match(r"^\s*[-*+]?\s*\*\*\s*([^*]+?)\s*\*\*\s*[:：]", s)
+            if m:
+                fields.append(m.group(1).strip())
+        name = label.strip("# ").strip()
+        if rows:
+            header = rows[0]
+            row_names = [r[0] for r in rows[1:] if r and r[0]]
+            out.append(f"· {name}（表格：{' | '.join(header)}"
+                       + (f"；行：{'、'.join(row_names)}" if row_names else "") + "）")
+        elif fields:
+            out.append(f"· {name}（字段：{'、'.join(fields)}）")
+    return out
+
+
+def _frontmatter_key_help(fields: dict, parsed: dict) -> list:
+    """给 AI 的「可填 frontmatter 键」清单：键名 + 模板变量的取值约束（suggester 的可选值）。
+
+    例：
+        phase（历史分期）只能取：晚清（1881—1911）、北洋（1912—1927）、抗战（1937—1945）
+        timeline（挂靠节点）
+        date / locations / people …
+    """
+    keys = [k for k in (fields or {}).keys() if k not in PROTECTED_FIELDS]
+    var_to_key = {str(k): str(v) for k, v in (parsed.get("field_keys") or {}).items()}   # 变量 → 键
+    options = parsed.get("options") or {}
+    labels = {p.get("var"): p.get("label") for p in (parsed.get("prompts") or [])}
+    lines, seen = [], set()
+    for var, key in var_to_key.items():                # 模板里拼装出来的键（含 suggester）
+        if key in PROTECTED_FIELDS or key in seen:
+            continue
+        seen.add(key)
+        label = labels.get(var) or ""
+        head = key + (f"（{label}）" if label and label != key else "")
+        opts = [str(o) for o in (options.get(var) or []) if str(o).strip()]
+        lines.append(f"{head} 只能取以下之一（不确定可留空）：" + "、".join(opts) if opts else head)
+    for k in keys:                                     # 其余键（骨架里已有的）
+        if k in seen:
+            continue
+        seen.add(k)
+        lines.append(str(k))
+    return lines
+
+
+def build_analysis_prompt(cfg: dict, topic: str, type_hint: str = "", hits: list | None = None,
+                          exists: bool | None = None) -> str:
+    """构造 AI 分析提示词：主题 + 检索命中 + 目标模板骨架 + 格式规范约束 → 只输出 JSON。
+
+    exists=True 表示知识库里已有同名词条（这次是增量补空）；False 表示要新建一个词条。
+    未指定类型时：给出**各类型的小节标题清单**，要求先定 type、再逐字照抄该类型的小节名，
+    否则 AI 会按「通用」模板给小节，落到人物/事件等模板上就全对不上了。
+    """
+    tpl_text, _note = load_template_text(cfg, type_hint or "通用")
+    parsed = parse_template(tpl_text)
+    if parsed["templater"]:
+        values = build_template_values(type_hint or "通用", "", "", {}, parsed["prompts"],
+                                      parsed.get("field_keys"))
+        fields, body, _ = render_template(tpl_text, values, [])
+    else:
+        fields, body = split_frontmatter(tpl_text)
+        fields, body = (fields or {}), (body or tpl_text)
+    fields = canonicalize_fields(fields)
+    skeleton = "\n".join(label for label, _b in parse_sections(body).values())
+    shape_hints = _section_shape_hints(body)
+    fm_keys = _frontmatter_key_help(fields, parsed)
+    known = [(h.get("title", ""), h.get("snippet", "")) for h in (hits or [])]
+    types = sorted((cfg.get("routes") or {}).keys())
+    prompt = (
+        f"研究主题/关键词：{topic}\n"
+        f"目标类型（若指定）：{type_hint or '由你判定'}\n"
+        f"可选类型（从中选择）：{'、'.join(types)}\n\n"
+        "【知识库格式规范（硬性要求）】\n"
+        "1. frontmatter 只允许英文键名，值里禁止出现 [[ ]]；\n"
+        "2. 正文只有一个 H1；你给的章节标题必须与骨架**逐字一致**（含 emoji）；\n"
+        "3. **骨架里每个小节都要给内容**，尤其是事实型小节（时间 / 地点 / 交战双方 / 指挥官 / 兵力 /\n"
+        "   经过 / 伤亡 / 影响 / 职务 / 关系等）。用你知识范围内公认的史实来写；数字有争议就给区间与\n"
+        "   主要说法（例：「约4万—9万人，日方公布约4万余人」），**不要因为“可能有争议”就把整节留空**。\n"
+        "4. 只有某一个具体条目确实不知道时才省略它（程序会写 <!-- TODO: 待补 -->），\n"
+        "   绝不要编造人名、番号、日期、数字；也不要因为一个小节没把握就把它和其它小节一起留空。\n"
+        "5. **凡是有争议的数字或结论，必须紧跟在那一行下面附一条“争议说明 + 来源简介”**\n"
+        "   （所有类型都适用，写在被争议条目的正下方，行首缩进两个空格）：\n"
+        "        > ⚖️ 争议说明：<各方说法差在哪、为什么有分歧>｜来源：<1~3 个具体出处，注明哪一方/哪本书/哪个机构>\n"
+        "   例：\n"
+        "        - 中国军队伤亡约25万—30万人\n"
+        "          > ⚖️ 争议说明：中方统计约25万—30万，日方战报仅称约4万余人，学界多认为日方数字偏低。｜来源：中方《抗日战史》、日方防卫厅《战史丛书》、蒋纬国《抗日御侮》\n"
+        "   没有争议的条目不要写这一行；不要只写“存在争议”而不说来源。\n\n"
+        + ("知识库现状：**已有同名词条**——这是增量补空，只填骨架里的空缺，"
+           "已有内容不要重复、不要改写。\n" if exists is True else "")
+        + ("知识库现状：知识库里**还没有这个词条**——请按骨架完整生成一个新词条，"
+           "内容要能独立成篇（这是本程序最常见的用法）。\n" if exists is False else "")
+        + "【知识库已有相关笔记（仅供参考，没有也不影响）】\n"
+        + ("\n".join(f"- {t}  << {s[:60]}" for t, s in known) if known
+           else ("（没有其他相关笔记）" if exists is True else "（无相关命中：这是一个新词条）"))
+        + (f"\n\n【目标笔记骨架（章节标题必须原样使用）】\n{skeleton}\n\n" if type_hint else
+           f"\n\n【格式示例（**只参考排版**：emoji 小节、要点式内容、空位写 TODO；小节名不要照抄这个示例）】\n{skeleton}\n\n"
+           "【各类型的章节标题清单（**先定 type，再把 content 的键逐字取自你选定类型的那一行**，含 emoji，不要混用其它类型）】\n"
+           + _type_section_table(cfg) + "\n\n")
+        + ("\n\n【小节填写格式（**必须照这个来，程序要按字段名/行名填表**）】\n"
+           + "\n".join(shape_hints) + "\n"
+           "· 「字段：」小节 → content 用 `- **字段名**：值`（字段名照抄，别自己改名）；\n"
+           "· 「表格：」小节 → content 用 `- **行名**：<左列值> / <右列值>`（一行一格，程序会填进表格）；\n"
+           "· 其余小节正常写要点即可。" if shape_hints else "")
+        + "【可填的 frontmatter 英文键（有「只能取」的必须从给定值里选一个）】\n"
+        + ("\n".join(fm_keys) if fm_keys else "（无）")
+        + "\n\n请只输出一个合法 JSON 对象（不要 Markdown 围栏、不要任何解释）：\n"
+        '{"type": "事件", "title": "示例事件", "summary": "一句话摘要", "importance": 4,\n'
+        ' "frontmatter": {"period": "民国时期", "date": "1937-07-07", "locations": ["北平"], '
+        '"people": ["宋哲元"], "prev_events": ["华北事变"]},\n'
+        ' "content": {"📅 事件经过": ["起因：…", "结果：…"], "### 起因": ["…"]},\n'
+        ' "related": ["蒋介石"]}\n'
+        "说明：type 必须从上面可选类型里选；content 的键必须来自骨架标题；"
+        "related 写不带 [[]] 的实体名（程序会自动加链）；正文涉及人物/事件时直接写 [[双链]]。\n"
+        "特别注意：骨架里有「📜 生平简史」时，content 的这个键请按**时间线罗列阶段**，"
+        "每条形如 `**1881-1894**：这一阶段在做什么`（起止年份 + 事实，不要写成大段散文）。"
+    )
+    return prompt
+
+
+def section_clean_name(norm: str) -> str:
+    """去掉小节 norm 开头的非中文前缀（数字序号、emoji），用于跨格式匹配。"""
+    return re.sub(r"^[^\u4e00-\u9fff]+", "", norm)
+
+
+def fuzzy_match_section(user_norm: str, template_norms: list[str]) -> str | None:
+    """用户小节名 → 模板小节 norm（忽略序号/emoji 前缀；先精确匹配，再取最长的包含匹配）。"""
+    return _best_section_match(user_norm, template_norms)
+
+
+def parse_manual_input(text: str) -> OrderedDict:
+    """
+    解析手动输入内容为 {norm: (标题行, [内容行])}。
+    支持 ## / ### 标题行作小节分隔；连续无标题行归入前一小节。
+    """
+    result = OrderedDict()
+    cur_norm = cur_label = None
+    cur_lines: list[str] = []
+    for line in text.splitlines():
+        s = line.strip()
+        m = re.match(r"^(#{2,3})\s+(.+?)\s*$", s)
+        if m:
+            if cur_norm is not None:
+                result[cur_norm] = [cur_label, cur_lines]
+            label = m.group(0).strip()
+            cur_label = label
+            cur_norm = header_norm(label)
+            cur_lines = []
+        elif s:
+            cur_lines.append(line)
+    if cur_norm is not None:
+        result[cur_norm] = [cur_label, cur_lines]
+    return result
+
+
+def sections_from_ai(content: dict) -> OrderedDict:
+    """把 AI 的 content 对象（小节名 → 要点数组）转为 merge 用的小节结构。"""
+    result = OrderedDict()
+    for key, val in (content or {}).items():
+        if not key:
+            continue
+        # AI 偶尔输出嵌套键（如 "## 三、事件经过\n### 起因"）：取最后一级作为有效小节名
+        if "\n" in key or "\r" in key:
+            key = key.strip().splitlines()[-1].strip()
+            if not key:
+                continue
+        line = key if key.startswith("#") else ("### " + key if key.startswith(("起因", "发展", "结果", "出身",
+                        "教育", "早期", "阶段", "决策", "背景", "影响", "评价", "来源", "存藏", "引用", "时间", "地点",
+                        "涉及", "短期", "长期", "正面", "负面", "不同", "核心人物", "国内", "国际", "进攻方", "防御方"))
+                        else "## " + key)
+        norm = header_norm(line)
+        if norm == header_norm("参考资料"):
+            continue  # 参考资料由用户在 Obsidian 中填写，不写入 AI 内容
+        items = val if isinstance(val, list) else [str(val)]
+        cleaned = []
+        for x in items:
+            for raw in str(x).replace("\r\n", "\n").split("\n"):
+                t = raw.strip()
+                if not t:
+                    continue
+                # 争议说明这类嵌套引用必须保住缩进（§1-12），统一成两个空格
+                cleaned.append("  " + t if t.startswith(">") else t)
+        result[norm] = [line, cleaned]
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 备份：统一目录 `_备份/`（模板/笔记每个文件只留最新一份；整库快照保留最近 N 份）
+#   _备份/模板/<模板名>.md                 ← 模板被覆盖前的旧版（只留最新）
+#   _备份/笔记/<知识库相对路径>/<文件>.md    ← 笔记被改写前的旧版（只留最新）
+#   _备份/快照/<时间戳>-<名称>/…            ← 整库级操作前的快照，只保留最近 BACKUP_KEEP_SNAPSHOTS 份
+# ---------------------------------------------------------------------------
+BACKUP_DIR_NAME = "_备份"
+BACKUP_KEEP_SNAPSHOTS = 3
+
+
+def backup_root(create: bool = True) -> Path:
+    """统一备份根目录：**在程序目录里、按知识库分文件夹**（`<程序目录>/_备份/<库名>/`），
+    这样知识库永远干净、各时期库的备份也互不混；环境变量 `KB_BACKUP_DIR` 可强制指定（测试用）。"""
+    env = (os.environ.get("KB_BACKUP_DIR") or "").strip()
+    if env:
+        root = Path(env)
+    else:
+        # **不放在知识库里**：<程序目录>/_备份/<库名>/（每个知识库各一份、互不混）
+        kb = None
+        try:
+            kb = resolve_kb(load_config())
+        except Exception:
+            kb = None
+        base = app_dir() / BACKUP_DIR_NAME
+        root = (base / sanitize_title(kb.name)) if kb is not None else base
+    if create:
+        root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def backup_file(src: Path, kind: str = "笔记", rel: str | Path = "") -> Path | None:
+    """把一个文件备份到 `_备份/<kind>/[rel]`；同名覆盖 → 每个文件只保留最新一份。
+
+    用 copy2（保留 mtime），方便比较新旧与"整理备份"时判断该留哪一份。
+    """
+    src = Path(src)
+    if not src.is_file():
+        return None
+    dest = backup_root() / kind / (Path(rel) if str(rel) else Path(src.name))
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+    except Exception:
+        return None
+    return dest
+
+
+def backup_note(path: Path, kb_root: Path | None = None) -> Path | None:
+    """笔记备份：保留相对知识库的目录结构（`_备份/笔记/02 人物图谱/蔡锷.md`）。"""
+    path = Path(path)
+    rel: Path | str = path.name
+    if kb_root:
+        try:
+            rel = path.resolve().relative_to(Path(kb_root).resolve())
+        except Exception:
+            rel = path.name
+    return backup_file(path, "笔记", rel)
+
+
+def backup_template(path: Path) -> Path | None:
+    """模板备份：`_备份/模板/<模板名>.md`。"""
+    return backup_file(path, "模板", Path(path).name)
+
+
+def backup_snapshot(name: str, when=None) -> Path:
+    """新建批次快照目录 `_备份/快照/<时间戳>-<名称>/`，并把快照裁到最近 N 份。"""
+    stamp = (when or datetime.now()).strftime("%Y%m%d-%H%M%S")
+    d = backup_root() / "快照" / f"{stamp}-{name}"
+    d.mkdir(parents=True, exist_ok=True)
+    prune_snapshots()
+    return d
+
+
+def prune_snapshots(keep: int = BACKUP_KEEP_SNAPSHOTS) -> list:
+    """只保留最近 keep 个快照目录，返回被删掉的目录名。"""
+    snap_root = backup_root() / "快照"
+    if not snap_root.is_dir():
+        return []
+    dirs = sorted([d for d in snap_root.iterdir() if d.is_dir()], key=lambda d: d.name)
+    removed = []
+    for d in (dirs[:-keep] if keep > 0 else dirs):
+        try:
+            shutil.rmtree(d)
+            removed.append(d.name)
+        except Exception:
+            pass
+    return removed
+
+
+def backup_summary() -> dict:
+    """当前备份占用（给脚本/界面显示）。"""
+    root = backup_root()
+    out: dict = {}
+    for kind in ("模板", "笔记", "快照"):
+        d = root / kind
+        files = [p for p in d.rglob("*") if p.is_file()] if d.is_dir() else []
+        out[kind] = {"files": len(files),
+                     "mb": round(sum(p.stat().st_size for p in files) / 1048576, 2)}
+    out["root"] = str(root)
+    return out

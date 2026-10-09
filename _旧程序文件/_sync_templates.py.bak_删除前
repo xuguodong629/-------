@@ -1,0 +1,241 @@
+# -*- coding: utf-8 -*-
+"""
+_sync_templates.py —— 把知识库 Templates（模板）里的「格式规范」模板同步成程序内置模板。
+
+用法：
+    py _sync_templates.py            # 同步到同目录的 templates.py
+    py _sync_templates.py --check    # 只比对，不写文件（有差异返回码 1）
+
+为什么要这样同步：
+    * Templates（模板）/*.md 是 `格式规范.md` 的唯一落地形态（Templater + emoji 章节 +
+      英文 frontmatter 键），程序内置模板必须与它保持同一份内容，否则「填充模板」
+      就会用回旧的编号型格式；
+    * 同步后 templates.py 是纯数据模块，KB_TEMPLATES 保存全部规范模板原文，
+      BUILTIN_TEMPLATES 按「类型 → 模板」供程序生成笔记时取用。
+
+同步源固定为下面 KB_TPL；换知识库时改这一个常量即可。
+"""
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+sys.stdout.reconfigure(encoding="utf-8") if hasattr(sys.stdout, "reconfigure") else None
+
+HERE = Path(__file__).resolve().parent
+KB_TPL = Path(r"G:\个人文件\知识库-历史\00-Inbox\历史\19民国") / "Templates（模板）"
+# 多时期库的**共享模板库**（顶层）：古代史模板集在它的子目录里
+SHARED_TPL = Path(r"G:\个人文件\知识库-历史\00-Inbox\历史") / "Templates（模板）"
+ANCIENT_DIR_NAMES = ("古代社会模板", "古代", "ancient")
+OUT = HERE / "templates.py"
+SPEC_FILE = "格式规范.md"
+
+# 只有古代史才有的类型 → 古代模板（键加 `古代/` 前缀，避免与近现代同名文件（人物/事件/史料）冲突）
+ANCIENT_TYPE_TEMPLATE_FILE = {
+    "帝王": "古代/帝王", "朝代": "古代/朝代", "政权": "古代/政权", "战争": "古代/战争",
+    "地理": "古代/地理", "经济": "古代/经济", "考古": "古代/考古", "职官": "古代/职官",
+    "法律": "古代/法律", "年号": "古代/年号", "民族与族群": "古代/民族与族群",
+    "出土文献": "古代/出土文献", "争议": "古代/争议", "重大工程": "古代/重大工程",
+    "传世典籍": "古代/传世典籍", "思想流派": "古代/思想流派",
+    "官署与机构": "古代/官署与机构",
+}
+
+# 模板文件顺序：与 格式规范.md「0.3 模板清单」一致
+ORDER = [
+    "时间线", "人物", "人物图谱", "派系", "派系图谱", "军队与军事院校",
+    "国民党全史", "共产党形成史", "国家制度与财政", "中国地图集", "国际势力图谱",
+    "条约与原始文献", "事件", "事件数据库", "战役", "战役数据库",
+    "史料", "史料数据库", "通用", "首页",
+]
+
+# 类型（config.routes 的键）→ 该类型的首选模板文件
+TYPE_TEMPLATE_FILE = {
+    "时间线": "时间线",
+    "人物": "人物图谱",
+    "派系": "派系图谱",
+    "军队": "军队与军事院校",
+    "国民党": "国民党全史",
+    "共产党": "共产党形成史",
+    "制度": "国家制度与财政",
+    "地区": "中国地图集",
+    "国际势力": "国际势力图谱",
+    "条约": "条约与原始文献",
+    "专题": "通用",
+    "事件": "事件",
+    "战役": "战役",
+    "史料": "史料",
+    "通用": "通用",
+}
+
+# 格式规范 §1 第 11 条：文件末尾固定 `---` + `**关联**：…`。
+# 模板自己没写页脚时，程序按这张表补齐（模板文件建议也补上）。
+DEFAULT_FOOTERS = {
+    "时间线": "[[01时间线]] | [[02人物图谱]] | [[03派系图谱]] | [[12事件数据库]]",
+    "人物": "[[02人物图谱]] | [[03派系图谱]] | [[12事件数据库]]",
+    "人物图谱": "[[02人物图谱]] | [[03派系图谱]] | [[12事件数据库]]",
+    "派系": "[[01时间线]] | [[02人物图谱]] | [[03派系图谱]] | [[04军队与军事院校]]",
+    "派系图谱": "[[01时间线]] | [[02人物图谱]] | [[03派系图谱]] | [[04军队与军事院校]]",
+    "军队与军事院校": "[[04军队与军事院校]] | [[01时间线]] | [[13战役数据库]]",
+    "国民党全史": "[[05国民党全史]] | [[01时间线]] | [[02人物图谱]] | [[12事件数据库]]",
+    "共产党形成史": "[[06共产党形成史]] | [[01时间线]] | [[02人物图谱]] | [[12事件数据库]]",
+    "国家制度与财政": "[[07国家制度与财政]] | [[01时间线]] | [[02人物图谱]]",
+    "中国地图集": "[[08中国地图集（中文）]] | [[01时间线]] | [[03派系图谱]]",
+    "国际势力图谱": "[[09国际势力图谱]] | [[01时间线]] | [[10条约与原始文献]]",
+    "条约与原始文献": "[[10条约与原始文献]] | [[01时间线]] | [[09国际势力图谱]]",
+    "事件": "[[12事件数据库]] | [[01时间线]] | [[02人物图谱]] | [[03派系图谱]]",
+    "事件数据库": "[[12事件数据库]] | [[01时间线]] | [[02人物图谱]] | [[03派系图谱]]",
+    "战役": "[[13战役数据库]] | [[01时间线]] | [[04军队与军事院校]]",
+    "战役数据库": "[[13战役数据库]] | [[01时间线]] | [[04军队与军事院校]]",
+    "史料": "[[14史料数据库]] | [[12事件数据库]] | [[10条约与原始文献]]",
+    "史料数据库": "[[14史料数据库]] | [[12事件数据库]] | [[10条约与原始文献]]",
+    "通用": "[[00首页]] | [[01时间线]] | [[02人物图谱]] | [[03派系图谱]]",
+    "首页": "[[01时间线]] | [[02人物图谱]] | [[03派系图谱]] | [[12事件数据库]]",
+}
+
+HEADER = '''# -*- coding: utf-8 -*-
+"""
+templates.py —— 程序内置模板（**由 _sync_templates.py 自动生成，请勿手改**）。
+
+模板原文来自知识库的 `Templates（模板）/*.md`，即 `格式规范.md` 的落地形态：
+  * 文件开头是 Templater 的 `<%* %>` 收集块，所有 tp.system.prompt() 只在这里调用一次；
+  * frontmatter 一律英文键名，frontmatter 内禁止 [[ ]]；
+  * 正文只有一个 H1 + 若干 emoji 章节（## 📌 …），空位写 <!-- TODO: 待补 -->；
+  * 结尾固定 `---` + `**关联**：[[…]] | [[…]]`。
+
+程序侧的用法：
+  * `KB_TEMPLATES`      —— 全部规范模板原文（「初始化默认模板」按此写入模板目录）；
+  * `BUILTIN_TEMPLATES` —— 类型 → 模板原文（模板目录里找不到对应 .md 时的兜底）；
+  * 生成笔记时由 core.render_template() 解析 `<%* %>` 块与 `<% … %>` 表达式，
+    把 Templater 模板直接渲染成一篇符合格式规范的笔记骨架。
+
+重新同步：`py _sync_templates.py`（源目录见该脚本的 KB_TPL 常量）。
+"""
+
+'''
+
+
+def load_templates() -> "dict[str, str]":
+    """模板目录里的 .md 为准；程序里已有、但目录里没有的模板保留（兜底），并打印说明。"""
+    if not KB_TPL.is_dir():
+        raise SystemExit(f"模板目录不存在：{KB_TPL}")
+    found = {}
+    for p in sorted(KB_TPL.glob("*.md")):
+        if p.name == SPEC_FILE:
+            continue
+        found[p.stem] = p.read_text(encoding="utf-8")
+    if not found:
+        raise SystemExit(f"模板目录里没有 .md 模板：{KB_TPL}")
+
+    kept = {}
+    try:
+        import templates as _old                      # noqa: PLC0415  已有内置模板
+        for name, text in (getattr(_old, "KB_TEMPLATES", {}) or {}).items():
+            if name not in found:
+                kept[name] = text
+    except Exception:
+        kept = {}
+    if kept:
+        print("目录里没有、保留程序内置版（作兜底）：" + "、".join(sorted(kept)))
+    ancient = load_ancient_templates()
+    if ancient:
+        print(f"古代史模板集：从子目录纳入 {len(ancient)} 个 → " + "、".join(sorted(ancient)))
+    merged = {**kept, **found, **ancient}
+    ordered = [n for n in ORDER if n in merged]
+    ordered += [n for n in sorted(merged) if n not in ordered]
+    return {n: merged[n] for n in ordered}
+
+
+def load_ancient_templates() -> "dict[str, str]":
+    """从 `古代社会模板/`（优先共享模板库，其次 19民国 模板目录）收集古代史模板。
+
+    键加 `古代/` 前缀：古籍模板里 `人物`/`事件`/`史料` 等与近现代同名但内容不同，
+    前缀可避免互相覆盖；同时把"古代独有类型"登记进 TYPE_TEMPLATE_FILE（不覆盖已有的近现代类型）。
+    """
+    cands = [d for base in (KB_TPL, SHARED_TPL) for d in [base / n for n in ANCIENT_DIR_NAMES]]
+    out: dict = {}
+    for d in cands:
+        if not d.is_dir():
+            continue
+        for p in sorted(d.glob("*.md")):
+            if p.name == SPEC_FILE:
+                continue
+            out["古代/" + p.stem] = p.read_text(encoding="utf-8")
+        if out:
+            break
+    for type_, key in ANCIENT_TYPE_TEMPLATE_FILE.items():
+        TYPE_TEMPLATE_FILE.setdefault(type_, key)     # 已被近现代占用的类型名（人物/事件/史料…）保持不动
+    return out
+
+
+def literal(text: str) -> str:
+    """生成可读的 Python 字符串字面量。
+
+    必须用 **raw 三引号**：模板里的 JS 字符串含有 `\\n`（如 tR += "---\\n"），
+    普通三引号会被 Python 抢先转义成真实换行，模板结构就被破坏了。
+    含 ''' 或结尾反斜杠时退回 JSON 转义。
+    """
+    if "'''" not in text and not text.endswith("\\"):
+        return "r'''" + text + "'''"
+    return json.dumps(text, ensure_ascii=False)
+
+
+def build_module(templates: "dict[str, str]") -> str:
+    out = [HEADER.rstrip("\n"), "", "# 全部规范模板原文（文件名 stem → 原文）", "KB_TEMPLATES = {"]
+    for name, text in templates.items():
+        out.append(f"    {name!r}: {literal(text)},")
+    out.append("}")
+    out.append("")
+    out.append("# 类型（config.routes 的键）→ 该类型的首选模板文件")
+    out.append("TYPE_TEMPLATE_FILE = {")
+    for type_, name in TYPE_TEMPLATE_FILE.items():
+        if name not in templates:
+            continue
+        out.append(f"    {type_!r}: {name!r},")
+    out.append("}")
+    out.append("")
+    out.append("# 类型 → 模板原文（生成笔记的兜底模板）")
+    out.append("BUILTIN_TEMPLATES = {t: KB_TEMPLATES[f] for t, f in TYPE_TEMPLATE_FILE.items() if f in KB_TEMPLATES}")
+    out.append("")
+    out.append("# 格式规范 §1 第 11 条：模板自己没写页脚时按这张表补齐（模板名 → 关联行）")
+    out.append("DEFAULT_FOOTERS = {")
+    for name in templates:
+        if name in DEFAULT_FOOTERS:
+            out.append(f"    {name!r}: {DEFAULT_FOOTERS[name]!r},")
+    out.append("}")
+    out.append("")
+    out.append("# 类型 → 关联行")
+    out.append("TYPE_FOOTER = {t: DEFAULT_FOOTERS[f] for t, f in TYPE_TEMPLATE_FILE.items() if f in DEFAULT_FOOTERS}")
+    out.append("")
+    out.append('# 模板目录默认名（知识库根下）')
+    out.append('DEFAULT_TEMPLATES_DIR_NAME = "Templates（模板）"')
+    out.append("")
+    out.append("# 格式规范文件名（模板目录内，只读、不作为模板）")
+    out.append(f'SPEC_FILE_NAME = "{SPEC_FILE}"')
+    out.append("")
+    return "\n".join(out)
+
+
+def main() -> int:
+    check_only = "--check" in sys.argv
+    templates = load_templates()
+    try:                                        # 复用 core 里的生成器，避免两套实现分叉
+        import core
+        new_text = core.render_templates_module(templates, ORDER)
+    except Exception:
+        new_text = build_module(templates)
+    old_text = OUT.read_text(encoding="utf-8") if OUT.exists() else ""
+    if check_only:
+        same = old_text == new_text
+        print(("一致：" if same else "有差异：") + str(OUT))
+        print(f"模板 {len(templates)} 个：" + "、".join(templates))
+        return 0 if same else 1
+    OUT.write_text(new_text, encoding="utf-8")
+    print(f"已同步 {len(templates)} 个模板 → {OUT}")
+    print("模板：" + "、".join(templates))
+    print(f"文件大小：{OUT.stat().st_size} 字节")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

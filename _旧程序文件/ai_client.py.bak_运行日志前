@@ -1,0 +1,270 @@
+# -*- coding: utf-8 -*-
+"""
+ai_client.py —— AI 检索与信息抽取客户端（DeepSeek / 任意 OpenAI 兼容服务）
+
+零第三方依赖（仅标准库 urllib）。配置在 config.json 的 "ai" 节点：
+  provider, base_url, api_key, model, temperature, max_tokens
+可在桌面端「AI 工作台」说明区随时修改，也可直接编辑 config.json。
+
+针对「推理模型」的坑（deepseek-flash / deepseek-reasoner 等）：
+  * 它们先输出 reasoning_content（思考），再输出 content（答案），
+    思考同样计入 max_tokens；预算太小就会 finish_reason=length、content 为空。
+    本模块遇到这种情况会自动把预算翻倍重试（最多到 32000），并在失败时给出明确提示。
+  * 支持 response_format={"type":"json_object"}（服务端不支持时自动降级重试）。
+"""
+from __future__ import annotations
+
+import json
+import re
+import urllib.error
+import urllib.request
+
+DEFAULT_MAX_TOKENS = 8000
+MAX_TOKENS_CAP = 32000
+
+
+class AIError(Exception):
+    """AI 调用失败（键缺失、网络错误、JSON 解析失败等），message 为中文说明。"""
+
+
+class AIClient:
+    def __init__(self, base_url: str, api_key: str, model: str,
+                 temperature: float = 0.3, timeout: int = 300,
+                 max_tokens: int = DEFAULT_MAX_TOKENS, json_mode: bool = True):
+        self.base_url = (base_url or "https://api.deepseek.com/v1").rstrip("/")
+        self.api_key = (api_key or "").strip()
+        self.model = model or "deepseek-chat"
+        self.temperature = temperature
+        self.timeout = timeout
+        self.max_tokens = int(max_tokens or DEFAULT_MAX_TOKENS)
+        self.json_mode = bool(json_mode)
+        self.last_meta: dict = {}
+        self.last_raw: str = ""
+
+    def ready(self) -> tuple[bool, str]:
+        if not self.api_key:
+            return False, "未配置 API Key（config.json 的 ai.api_key，或编辑后保存）"
+        if not self.base_url:
+            return False, "未配置 Base URL"
+        return True, ""
+
+    # ------------------------------------------------------------------
+    # 底层请求
+    # ------------------------------------------------------------------
+
+    def _post(self, payload: dict) -> dict:
+        url = self.base_url + "/chat/completions"
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            detail = ""
+            try:
+                detail = e.read().decode("utf-8")[:400]
+            except Exception:
+                pass
+            raise AIError(f"HTTP {e.code}：{detail or e.reason}") from e
+        except urllib.error.URLError as e:
+            raise AIError(f"网络错误：{e.reason}") from e
+        except Exception as e:
+            raise AIError(f"请求失败：{e}") from e
+
+    def chat(self, messages: list[dict], max_tokens: int | None = None,
+             json_mode: bool | None = None) -> str:
+        """调用 Chat Completions，返回模型输出文本（content）。
+
+        推理模型把预算烧光（finish_reason=length 且 content 为空）时，
+        自动翻倍 max_tokens 重试，最多到 MAX_TOKENS_CAP。
+        """
+        ok, why = self.ready()
+        if not ok:
+            raise AIError(why)
+        budget = int(max_tokens or self.max_tokens)
+        use_json = self.json_mode if json_mode is None else bool(json_mode)
+        for _attempt in range(4):
+            payload = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": self.temperature,
+                "max_tokens": budget,
+                "stream": False,
+            }
+            if use_json:
+                payload["response_format"] = {"type": "json_object"}
+            try:
+                data = self._post(payload)
+            except AIError as exc:
+                # 有些兼容服务不认 response_format：降级重试一次
+                if use_json and "response_format" in str(exc):
+                    use_json = False
+                    continue
+                raise
+
+            choice = (data.get("choices") or [{}])[0]
+            msg = choice.get("message") or {}
+            finish = choice.get("finish_reason")
+            usage = data.get("usage") or {}
+            content = (msg.get("content") or "").strip()
+            reasoning = (msg.get("reasoning_content") or "").strip()
+            self.last_meta = {"finish_reason": finish, "usage": usage,
+                              "reasoning_chars": len(reasoning), "model": payload["model"]}
+            self.last_raw = content or reasoning
+            if content:
+                return content
+            # content 为空：推理模型把预算吃完了 → 翻倍预算再来一次
+            if finish == "length" and budget < MAX_TOKENS_CAP:
+                budget = min(MAX_TOKENS_CAP, max(budget * 2, 8000))
+                continue
+            if reasoning and self.extract_json(reasoning) is not None:
+                return reasoning                     # 少数情况答案混在推理里
+            return ""
+        return ""
+
+    # ------------------------------------------------------------------
+    # JSON 提取（容错）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def extract_json(content: str):
+        """从模型输出里尽可能抠出 JSON；抠不到返回 None。
+
+        依次尝试：去围栏 → 直接 loads → 去掉 <thinking> 段 → 平衡括号扫描第一个 {...}
+        或 [...] → 清理尾逗号后再 loads。
+        """
+        if not content:
+            return None
+        text = content.strip()
+        text = re.sub(r"<(?:thinking|reasoning)>.*?</(?:thinking|reasoning)>", "", text,
+                      flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r"^\s*```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```\s*$", "", text)
+        text = text.strip()
+        for candidate in (text, _balanced_block(text, "{"), _balanced_block(text, "[")):
+            if not candidate:
+                continue
+            for fixed in (candidate, _drop_trailing_commas(candidate)):
+                try:
+                    return json.loads(fixed)
+                except Exception:
+                    continue
+        return None
+
+    def _failure_reason(self) -> str:
+        meta = self.last_meta or {}
+        usage = meta.get("usage") or {}
+        reasoning_tokens = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
+        finish = meta.get("finish_reason") or "未知"
+        bits = [f"模型没有返回可用 JSON（finish_reason={finish}"]
+        if reasoning_tokens:
+            bits.append(f"，其中推理占 {reasoning_tokens} tokens")
+        bits.append("）")
+        msg = "".join(bits)
+        if finish == "length":
+            msg += ("：输出被 max_tokens 截断。到「AI 设置」把 max_tokens 调大（如 16000），"
+                    "或把模型换成非推理模型 deepseek-chat。")
+        else:
+            msg += "：可直接重试；若反复失败，把模型换成 deepseek-chat。"
+        head = (self.last_raw or "").strip().replace("\n", " ")[:180]
+        if head:
+            msg += f"　模型原样输出开头：{head}"
+        return msg
+
+    # ------------------------------------------------------------------
+    # 高层封装
+    # ------------------------------------------------------------------
+
+    def analyze_topic(self, prompt: str, retries: int = 1, persona: str = "") -> dict:
+        """分析主题并要求严格 JSON。失败时抛 AIError（带可执行的修复建议）。
+
+        persona：可选的人设/领域说明（来自 config.json 的 ai.persona）；
+                 不配则用中性的历史研究助手，**不预设任何朝代或时期**。
+        """
+        base = str(persona or "").strip() or "你是严谨的历史研究助手。"
+        system = (base
+                  + "你必须只输出一个合法的 JSON 对象，不要输出任何解释、注释或 Markdown 围栏。"
+                  "不要任何思考过程，直接给 JSON。")
+        messages = [{"role": "system", "content": system},
+                    {"role": "user", "content": prompt}]
+        for attempt in range(max(0, retries) + 1):
+            content = self.chat(messages)
+            obj = self.extract_json(content)
+            if isinstance(obj, list):                 # 模型偶尔包一层数组：[{...}] → 取第一个对象
+                obj = next((x for x in obj if isinstance(x, dict)), None)
+            if obj is not None:
+                return obj
+            if attempt < retries:
+                messages = messages + [
+                    {"role": "assistant", "content": (content or "")[:200]},
+                    {"role": "user", "content": "上一条不是合法 JSON。请直接输出那一个 JSON 对象本身，"
+                                                "不要任何解释、前后缀或 Markdown 围栏。"}]
+        raise AIError(self._failure_reason())
+
+    def search_guide(self, topic: str, overview: str, hits: list[dict]) -> dict:
+        """生成检索建议（对现有知识库命中项给出下一步研究方向）。"""
+        prompt = (
+            "研究关键词：" + topic + "\n"
+            "知识库概况：" + overview + "\n"
+            "已有的相关笔记（文件名 : 片段）：\n" +
+            "\n".join(f"- {h['title']} : {h['snippet'][:80]}" for h in hits) +
+            "\n请只输出一个 JSON 对象：{\"analysis\": \"对已有内容的概述\", "
+            "\"gaps\": [\"知识缺口1\", ...], \"next_steps\": [\"建议下一步研究1\", ...]}"
+        )
+        return self.analyze_topic(prompt)
+
+    def quick_test(self) -> str:
+        """连接测试：发一个极小的请求。
+
+        推理模型的思考也会占 token，返回空 content 不代表连接失败——只要 API 有正常响应即算通。
+        """
+        messages = [{"role": "user", "content": "请只回复两个字：正常。"}]
+        content = self.chat(messages, max_tokens=512, json_mode=False)
+        if content.strip():
+            return content.strip()[:40]
+        finish = (self.last_meta or {}).get("finish_reason") or "未知"
+        reasoning = (self.last_meta or {}).get("reasoning_chars") or 0
+        return f"连接正常（模型 {self.model} 是推理模型：本次 {reasoning} 字推理、finish_reason={finish}）"
+
+
+def _balanced_block(text: str, opener: str) -> str:
+    """从第一个 opener 起做平衡括号扫描，返回完整块；找不到返回空串。"""
+    closer = "}" if opener == "{" else "]"
+    start = text.find(opener)
+    if start < 0:
+        return ""
+    depth = 0
+    in_str = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == opener:
+            depth += 1
+        elif ch == closer:
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return ""
+
+
+def _drop_trailing_commas(text: str) -> str:
+    return re.sub(r",\s*([}\]])", r"\1", text)

@@ -1,0 +1,166 @@
+# -*- coding: utf-8 -*-
+"""一次性补丁：清除底层逻辑里的"民国那一套"硬编码（era-neutral 改造）。跑完可删。"""
+import ast
+import pathlib
+
+ROOT = pathlib.Path(__file__).resolve().parent
+CORE = ROOT / "core.py"
+
+
+def patch(path, pairs, label):
+    p = pathlib.Path(path)
+    s = p.read_text(encoding="utf-8")
+    for old, new, why in pairs:
+        if old not in s:
+            print(f"  ⚠ 锚点未命中（跳过）：{why}")
+            continue
+        s = s.replace(old, new, 1)
+        print(f"  ✓ {why}")
+    if p.suffix == ".py":
+        ast.parse(s)
+    p.write_text(s, encoding="utf-8")
+    print(f"  → {p.name} 写入完成（{label}）")
+
+
+# ── core.py 第二批 ───────────────────────────────────────────────
+core_pairs = []
+# 4) 页脚：删掉民国关联表，改为"库驱动或不做"
+s = CORE.read_text(encoding="utf-8")
+if "FOOTER_RELATED_TYPES = {" in s:
+    a = s.index("FOOTER_RELATED_TYPES = {")
+    b = s.index("def template_footer(")
+    s = s[:a] + s[b:]
+    CORE.write_text(s, encoding="utf-8")
+    print("  ✓ 删除 FOOTER_RELATED_TYPES 常量")
+
+core_pairs += [
+    (
+        '''    # 模板没写页脚 / 页脚解析不出来 → **按当前知识库的映射关系**生成；
+    # 一个关联类型都没有映射时**不加页脚**（不再回退任何内置常量）。
+    conv = []
+    for t in (FOOTER_RELATED_TYPES.get(type_) or (type_,)):
+        d = str(routes.get(t) or "").strip()
+        name = footer_link_name(d)
+        if name and name not in conv:
+            conv.append(name)''',
+        '''    # 模板没写页脚 / 页脚解析不出来 → **只按该库自己的配置**生成：
+    #   cfg["footer_types"] = {"战争": ["人物", "政权"], …}（可选，用户自己配）
+    # 没配 → **不加页脚**（不套任何时期的默认关联表）。
+    conv = []
+    footer_types = cfg.get("footer_types") or {}
+    related = (footer_types.get(type_) if isinstance(footer_types, dict) else None) or ()
+    for t in ((type_,) + tuple(related)):
+        d = str(routes.get(t) or "").strip()
+        name = footer_link_name(d)
+        if name and name not in conv:
+            conv.append(name)''',
+        "页脚改为 footer_types 驱动（无配置则不加页脚）",
+    ),
+    (
+        'out["tags"] = ["历史", "中国近代史", "民国史", type_]',
+        'out["tags"] = list(cfg.get("default_tags") or ["历史"]) + ([type_] if type_ else [])',
+        "默认标签不再写死近代史/民国史",
+    ),
+    (
+        'lines = [f"# 索引 · {d.name}", "", "> 由民国历史知识库自动生成（重建后覆盖）", ""]',
+        'lines = [f"# 索引 · {d.name}", "", "> 由" + str(cfg.get("app_title") or "知识库工具") + "自动生成（重建后覆盖）", ""]',
+        "目录索引文案中性化",
+    ),
+    (
+        'master = ["# 知识库总索引", "", "> 由民国历史知识库自动生成（重建后覆盖）", ""]',
+        'master = ["# 知识库总索引", "", "> 由" + str(cfg.get("app_title") or "知识库工具") + "自动生成（重建后覆盖）", ""]',
+        "总索引文案中性化",
+    ),
+    (
+        '''    td = templates_dir(cfg)
+    names = [p.name for p in list_template_files(td)] if td else []
+    if f"{t}.md" in names:
+        return f"{t}.md"''',
+        '''    td = templates_dir(cfg)
+    names = [p.name for p in list_template_files(td)] if td else []
+    # ① 该库档案里明确指定的模板（cfg["template_routes"]，切库时由档案载入）优先
+    pinned = str((cfg.get("template_routes") or {}).get(t) or "").strip()
+    if pinned and (not names or Path(pinned).name in names):
+        return Path(pinned).name
+    # ② 模板库里同名文件
+    if f"{t}.md" in names:
+        return f"{t}.md"''',
+        "pick_template_for_type：该库档案指定的模板优先",
+    ),
+    (
+        "    # 类型名 → 模板名（同一个意思的两种叫法；古代库/近现代库通用）",
+        "    # 类型名 → 模板名（**通用同义词兜底**，不含任何时期专属条目；仅在前两步都落空时使用）",
+        "TPL_TYPE_ALIASES 注释标明为通用兜底",
+    ),
+    (
+        '    known = {t for t, _ in SKELETON_TYPE_HINTS}          # 民国/通用类型词',
+        '    known = {t for t, _ in SKELETON_TYPE_HINTS}          # 通用概念词（兜底）',
+        "parse_keyword_lines 注释中性化",
+    ),
+    (
+        '        "index_file": INDEX_FILE_DEFAULT, # 总索引相对路径（相对知识库根）',
+        '''        "index_file": INDEX_FILE_DEFAULT, # 总索引相对路径（相对知识库根）
+        "app_title": "历史知识库 · V1.0（配置驱动）",   # 窗口标题（可改；不改 exe 文件名）
+        "footer_types": {},               # 可选：{"类型": ["关联类型", …]}；不配 → 不加「**关联**」页脚
+        "type_keywords": {},              # 可选：{"该库类型名": ["关键词", …]}，扩展类型判定
+        "default_tags": ["历史"],          # 可选：新建笔记的默认标签''',
+        "default_config 增补中性可选键",
+    ),
+    # 6) 模块 docstring / 示例中性化
+    ("core.py —— 民国历史知识库 · 核心引擎（配置驱动）",
+     "core.py —— 历史知识库 · 核心引擎（配置驱动，era-neutral）",
+     "core.py 标题中性化"),
+    ("* 核心逻辑与具体知识库（19民国 / 10秦汉 / …）无关，切换知识库无需改代码。",
+     "* 核心逻辑与**具体知识库、具体历史时期**无关：类型/目录/模板全部由「①页选定的知识库 + 该库档案」驱动。",
+     "core.py 说明中性化"),
+    ('\' "frontmatter": {"period": "民国时期", "date": "1937-07-07", "locations": ["北平"], \'',
+     '\' "frontmatter": {"period": "<该库时期>", "date": "1937-07-07", "locations": ["北平"], \'',
+     "AI 提示词示例中性化"),
+]
+patch(CORE, core_pairs, "core.py 第二批")
+
+# ── gui.py / main.py / 脚本注释 ─────────────────────────────────
+patch(ROOT / "gui.py", [
+    ('gui.py —— 民国历史知识库 · 桌面端界面（Tkinter，零第三方依赖）',
+     'gui.py —— 历史知识库 · 桌面端界面（Tkinter，零第三方依赖，era-neutral）', "gui.py 标题中性化"),
+    ('root.title("民国历史知识库 · V1.0（配置驱动）")',
+     'root.title(str(cfg.get("app_title") or "历史知识库 · V1.0（配置驱动）"))', "窗口标题改为可配置"),
+    ('self.set_status("提示：请先在「知识库设置」中选择知识库目录（例如 …\\\\历史\\\\19民国）")',
+     'self.set_status("提示：请先在「知识库设置」中选择知识库目录（例如 …\\\\历史\\\\<时期>\\\\<朝代>）")',
+     "状态栏提示中性化"),
+    ('title="选择知识库根目录（例如 …\\\\历史\\\\19民国）"',
+     'title="选择知识库根目录（例如 …\\\\历史\\\\<时期>\\\\<朝代>）"', "选目录对话框标题中性化"),
+    ('"""重填映射 = 按**当前知识库**扫描出的映射（不再是写死的民国目录名）。"""',
+     '"""重填映射 = 按**当前知识库**扫描出的映射（程序不内置任何时期的目录名）。"""', "重填映射说明中性化"),
+], "gui.py")
+
+patch(ROOT / "main.py", [
+    ("main.py —— 民国历史知识库 V1.0 · 程序入口",
+     "main.py —— 历史知识库 V1.0 · 程序入口（配置驱动）", "main.py 标题中性化"),
+    ("* 首次运行自动生成 config.json（知识库目录可预填你当前的 19民国，换库直接改配置）；",
+     "* 首次运行生成**零预设** config.json（知识库留空，由①页自己选；类型映射由②页扫描该库生成）；",
+     "main.py 说明中性化"),
+    ("* 自检：`民国历史知识库.exe --selftest`",
+     "* 自检：`<程序>.exe --selftest`", "main.py 自检示例中性化"),
+], "main.py")
+
+for f, pairs in (
+    ("_补齐双链.py", [('"03 派系图谱/北洋系.md"', '""<类型目录>/<词条名>.md""'),
+                      ("北洋系", "<词条名>")]),
+    ("_批量建条.py", [("民国", "历史")]),
+    ("_批量导入md.py", [("民国", "历史")]),
+):
+    p = ROOT / f
+    if not p.is_file():
+        print(f"  ⚠ 缺文件：{f}")
+        continue
+    s = p.read_text(encoding="utf-8")
+    n = 0
+    for old, new in pairs:
+        if old and old in s:
+            s = s.replace(old, new)
+            n += 1
+    ast.parse(s)
+    p.write_text(s, encoding="utf-8")
+    print(f"  → {f} 中性化 {n} 处")
+print("补丁跑完")

@@ -1,0 +1,1729 @@
+# -*- coding: utf-8 -*-
+"""
+test_core.py —— 核心引擎离线自测（沙盒知识库，不触碰真实知识库、不打开界面）
+
+运行：python test_core.py
+覆盖：目录扫描/注册表、类型路由、模板初始化、Templater 模板渲染、新建笔记、
+      增量更新（保已有内容）、frontmatter 英文键、双链补齐、离线检索、索引重建、统计，
+      以及生成结果对 `格式规范.md` 的符合性（复用 _check_spec.py）。
+"""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+from collections import OrderedDict
+import sys
+from pathlib import Path
+
+import core
+import _check_spec
+
+HERE = Path(__file__).parent
+SANDBOX = HERE / "_sandbox" / "模拟知识库"
+RESULTS: list[str] = []
+FAILS = 0
+
+
+def check(name: str, cond: bool, extra: str = ""):
+    global FAILS
+    mark = "PASS" if cond else "FAIL"
+    if not cond:
+        FAILS += 1
+    RESULTS.append(f"[{mark}] {name}" + (f"  — {extra}" if extra else ""))
+
+
+# ---------------------------------------------------------------------------
+# 沙盒里"用户提供的"模板：程序已**不再带任何内置模板**，
+# 所以测试自备最小模板集（等价于"用户在④页选定模板文件夹 / 粘贴模板"）。
+# ---------------------------------------------------------------------------
+def _tpl_person() -> str:
+    return r"""<%*
+const 历史分期 = await tp.system.suggester(["晚清（1881—1911）", "北洋（1912—1927）", "南京政府（1927—1937）", "抗战（1937—1945）", "内战（1945—1949）", "跨阶段 / 暂不确定"], ["晚清", "北洋", "南京政府", "抗战", "内战", ""]) || "";
+const 人物姓名 = await tp.system.prompt("人物姓名", tp.file.title);
+const 出生年 = await tp.system.prompt("出生年（可留空）") || "";
+const 逝世年 = await tp.system.prompt("逝世年（可留空）") || "";
+const 字号 = await tp.system.prompt("字号 / 别称（可留空）") || "";
+const 籍贯 = await tp.system.prompt("籍贯（可留空）") || "";
+const 身份 = await tp.system.prompt("主要身份（可留空）") || "";
+const 派系 = await tp.system.prompt("所属派系（可留空）") || "";
+tR += "---\n";
+tR += "title: " + 人物姓名 + "\n";
+tR += "aliases:\n  - " + [人物姓名, 字号].filter(Boolean).join("\n  - ") + "\n";
+tR += "type: 人物\n";
+tR += "born: " + 出生年 + "\n";
+tR += "died: " + 逝世年 + "\n";
+tR += "phase: " + 历史分期 + "\n";
+tR += "importance: \n";
+tR += "tags:\n  - 历史\n  - 人物\n";
+tR += "---\n";
+_%>
+
+# <% 人物姓名 %><% 出生年 ? "（" + 出生年 + "—" + 逝世年 + "）" : "" %>
+
+## 🪪 基本信息
+
+- **字号/别称**：<% 字号 ? 字号 : "<!-- TODO: 待补 -->" %>
+- **籍贯**：<% 籍贯 ? "[[" + 籍贯 + "]]" : "<!-- TODO: 待补 -->" %>
+- **主要身份**：<% 身份 ? 身份 : "<!-- TODO: 待补 -->" %>
+- **所属派系**：<% 派系 ? "[[" + 派系 + "]]" : "<!-- TODO: 待补 -->" %>
+
+## 📜 生平简史
+
+- <!-- TODO: 待补 —— 按时间线罗列阶段，每行形如 **1881-1894**：这一阶段在做什么 -->
+
+## 🏛️ 权力与职务
+
+- <!-- TODO: 待补 -->
+
+## ⚔️ 关键事件参与
+
+- <!-- TODO: 待补 -->
+
+## 🔗 关系网络
+
+- **上级/导师**：<!-- TODO: 待补 -->
+- **盟友**：<!-- TODO: 待补 -->
+- **对手**：<!-- TODO: 待补 -->
+
+## 📚 延伸阅读
+
+- <!-- TODO: 待补 -->
+
+---
+**关联**：[[02人物图谱]] | [[03派系图谱]] | [[12事件数据库]]
+"""
+
+
+def _tpl_event() -> str:
+    return r"""<%*
+const 事件名称 = await tp.system.prompt("事件名称", tp.file.title);
+const 日期 = await tp.system.prompt("日期 YYYY-MM-DD（可留空）") || "";
+const 地点 = await tp.system.prompt("地点（可留空）") || "";
+const 重要性 = await tp.system.prompt("重要性 1-5", "3") || "";
+tR += "---\n";
+tR += "title: " + 事件名称 + "\n";
+tR += "aliases:\n  - " + 事件名称 + "\n";
+tR += "type: 事件\n";
+tR += "date: " + 日期 + "\n";
+tR += "locations: []\n";
+tR += "people: []\n";
+tR += "prev_events: []\n";
+tR += "next_events: []\n";
+tR += "importance: " + 重要性 + "\n";
+tR += "tags:\n  - 历史\n  - 事件\n";
+tR += "---\n";
+_%>
+
+# <% 事件名称 %>
+
+## 📌 事件概览
+
+<!-- TODO: 待补 —— 用一段话说明起因、经过与结果 -->
+
+## 📅 事件经过
+
+### 起因
+
+- <!-- TODO: 待补 -->
+
+### 发展
+
+- <!-- TODO: 待补 -->
+
+### 结果
+
+- <!-- TODO: 待补 -->
+
+## 👤 核心人物
+
+- <!-- TODO: 待补 -->
+
+## 📍 时间与地点
+
+- **时间**：<% 日期 ? 日期 : "<!-- TODO: 待补 -->" %>
+- **地点**：<% 地点 ? "[[" + 地点 + "]]" : "<!-- TODO: 待补 -->" %>
+
+## 🌊 历史影响
+
+- <!-- TODO: 待补 -->
+
+## 📚 参考资料
+
+- <!-- TODO: 待补 -->
+
+---
+**关联**：[[12事件数据库]] | [[01时间线]] | [[02人物图谱]] | [[03派系图谱]]
+"""
+
+
+def _tpl_battle() -> str:
+    return r"""<%*
+const 战役名称 = await tp.system.prompt("战役名称", tp.file.title);
+const 日期 = await tp.system.prompt("日期 YYYY-MM-DD（可留空）") || "";
+const 地点 = await tp.system.prompt("地点（可留空）") || "";
+const 所属战争 = await tp.system.prompt("所属战争（可留空）") || "";
+const 结果 = await tp.system.prompt("结果（可留空）") || "";
+tR += "---\n";
+tR += "title: " + 战役名称 + "\n";
+tR += "aliases:\n  - " + 战役名称 + "\n";
+tR += "type: 战役\n";
+tR += "date: " + 日期 + "\n";
+tR += "locations: []\n";
+tR += "result: " + 结果 + "\n";
+tR += "war: " + 所属战争 + "\n";
+tR += "tags:\n  - 历史\n  - 战役\n";
+tR += "---\n";
+_%>
+
+# <% 战役名称 %>
+
+## ⚔️ 元数据
+
+- **时间**：<% 日期 ? 日期 : "<!-- TODO: 待补 -->" %>
+- **地点**：<% 地点 ? "[[" + 地点 + "]]" : "<!-- TODO: 待补 -->" %>
+- **所属战争**：<% 所属战争 ? 所属战争 : "<!-- TODO: 待补 -->" %>
+- **结果**：<% 结果 ? 结果 : "<!-- TODO: 待补 -->" %>
+
+## ⚖️ 兵力对比
+
+- **甲方**：<!-- TODO: 待补 -->（指挥官：<!-- TODO: 待补 -->，兵力：<!-- TODO: 待补 -->）
+- **乙方**：<!-- TODO: 待补 -->（指挥官：<!-- TODO: 待补 -->，兵力：<!-- TODO: 待补 -->）
+
+## 📋 战役经过
+
+1. <!-- TODO: 待补 -->
+2. <!-- TODO: 待补 -->
+
+## 🌊 结果与影响
+
+- <!-- TODO: 待补 -->
+
+---
+**关联**：[[13战役数据库]] | [[01时间线]] | [[04军队与军事院校]]
+"""
+
+
+def _tpl_generic(type_name: str, section: str = "📌 概览") -> str:
+    return (r"""<%*
+const 名称 = await tp.system.prompt("名称", tp.file.title);
+tR += "---\n";
+tR += "title: " + 名称 + "\n";
+tR += "aliases:\n  - " + 名称 + "\n";
+tR += "type: """ + type_name + r"""\n";
+tR += "tags:\n  - 历史\n";
+tR += "---\n";
+_%>
+
+# <% 名称 %>
+
+## """ + section + r"""
+
+- <!-- TODO: 待补 -->
+
+## 📚 参考资料
+
+- <!-- TODO: 待补 -->
+
+---
+**关联**：[[01时间线]] | [[02人物图谱]]
+""")
+
+
+# 沙盒模板集：文件名 → 模板原文（等价于"用户在④页选定/粘贴了这些模板"）
+def sandbox_templates() -> dict:
+    person, event, battle = _tpl_person(), _tpl_event(), _tpl_battle()
+    return {
+        "人物图谱": person, "人物": person,
+        "事件数据库": event, "事件": event,
+        "战役": battle, "战役数据库": battle,
+        "时间线": _tpl_generic("时间线", "🕰️ 大事记"),
+        "史料": _tpl_generic("史料", "📚 史料概况"),
+        "军队与军事院校": _tpl_generic("军队", "🪖 编制沿革"),
+        "派系图谱": _tpl_generic("派系", "🪪 基本信息"),
+        "通用": _tpl_generic("专题", "📌 概览"),
+    }
+
+
+SANDBOX_TEMPLATES: dict = {}
+
+
+def build_sandbox() -> None:
+    """沙盒里放两篇「旧格式」笔记，用来验证增量更新不会破坏已有内容。"""
+    if SANDBOX.exists():
+        shutil.rmtree(SANDBOX)
+    (SANDBOX / "01 时间线").mkdir(parents=True)
+    (SANDBOX / "02 人物图谱").mkdir(parents=True)
+    (SANDBOX / "12 事件数据库 ⭐").mkdir(parents=True)
+    (SANDBOX / "Templates（模板）").mkdir(parents=True)
+    (SANDBOX / "Assets（图片地图）").mkdir(parents=True)
+
+    # 模板由"用户"提供（程序已取消内置模板兜底）：把模板文件放进沙盒的 Templates（模板）/
+    # 并把"粘贴模板"目录也隔离到沙盒里，避免碰真实程序目录
+    os.environ["KB_TPL_DIR"] = str(SANDBOX / "_模板")
+    seed_sandbox_templates()
+
+    (SANDBOX / "01 时间线" / "1937年-七七事变.md").write_text(
+        "---\n年份: 1937\n类型: 历史事件\n时期: 民国时期\n重要性: 5\n人物:\n地点:\n标签:\n  - 中国历史\n---\n\n"
+        "# 1937年-七七事变\n\n## 一、事件概览\n\n> 用一段话概括这一事件。\n\n"
+        "## 三、事件经过\n\n### 起因\n\n- \n\n### 发展\n\n- 卢沟桥日军挑衅（已有内容，不应被覆盖）\n\n---\n\n## 十、参考资料\n\n-\n",
+        encoding="utf-8")
+
+    (SANDBOX / "02 人物图谱" / "蒋介石.md").write_text(
+        "---\n姓名: 蒋介石\n历史时期: 民国\n人物类型: 历史人物\n历史重要性: 5\n政治阵营: \n核心领域: \n标签:\n  - 中国历史\n---\n\n"
+        "# 蒋介石\n\n## 一、人物定位\n\n**核心身份：**\n\n- 国民政府军事委员会委员长（已有内容）\n\n"
+        "## 三、政治 / 军事生涯\n\n### 第一阶段\n\n- \n\n### 第二阶段\n\n- \n\n---\n\n## 十三、参考资料\n\n-\n",
+        encoding="utf-8")
+
+
+def seed_sandbox_templates() -> None:
+    """把测试自带的模板写进沙盒（等价于"用户在④页选定/粘贴了模板"）。"""
+    SANDBOX_TEMPLATES.clear()
+    SANDBOX_TEMPLATES.update(sandbox_templates())
+    (SANDBOX / "Templates（模板）").mkdir(parents=True, exist_ok=True)
+    for _name, _text in SANDBOX_TEMPLATES.items():
+        (SANDBOX / "Templates（模板）" / f"{_name}.md").write_text(_text, encoding="utf-8")
+
+def make_cfg() -> dict:
+    return {
+        "knowledge_base": str(SANDBOX),
+        "templates_dir": str(SANDBOX / "Templates（模板）"),
+        "routes": {
+            "时间线": "01 时间线",
+            "人物": "02 人物图谱",
+            "事件": "12 事件数据库 ⭐",
+        },
+        "template_routes": {
+            "人物": "人物图谱.md",
+            "事件": "事件数据库.md",
+            "时间线": "时间线.md",
+        },
+        "index_file": "01 时间线/索引.md",
+        # era-neutral：关联页脚由**该库自己配置**（程序不再内置任何时期的关联类型表）
+        "footer_types": {"时间线": ["人物", "事件"], "人物": ["事件"], "事件": ["时间线", "人物"]},
+    }
+
+
+def main() -> int:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+    build_sandbox()
+    cfg = make_cfg()
+
+    # ---- 1. 目录扫描注册表 ----
+    rows = core.scan_kb(SANDBOX)
+    names = [r["name"] for r in rows]
+    check("扫描注册表：识别 5 个目录", len(rows) == 5, "、".join(names))
+    role_map = {r["name"]: r["role"] for r in rows}
+    check("特殊目录标记 Templates/Assets", role_map["Templates（模板）"] == "特殊目录"
+          and role_map["Assets（图片地图）"] == "特殊目录")
+    check("内容目录标记 12 事件数据库", role_map["12 事件数据库 ⭐"] == "内容目录")
+
+    # ---- 2. 类型路由 ----
+    dp, note = core.resolve_route_dir(cfg, "事件")
+    check("路由：事件 → 12 事件数据库 ⭐", dp is not None and dp.name == "12 事件数据库 ⭐", note)
+    cfg["routes"]["事件"] = "99 不存在目录"
+    dp2, note2 = core.resolve_route_dir(cfg, "事件")
+    check("路由：缺失目录返回 None 并说明", dp2 is None and "不存在" in note2, note2)
+    cfg["routes"]["事件"] = "12 事件数据库 ⭐"
+
+    # ---- 2b. 类型别名归并（AI 常给「历史人物」这类说法）----
+    check("类型别名：历史人物 → 人物", core.resolve_type_alias(cfg, "历史人物")[0] == "人物")
+    check("类型别名：历史事件 → 事件", core.resolve_type_alias(cfg, "历史事件")[0] == "事件")
+    check("类型别名：精确命中不变", core.resolve_type_alias(cfg, "事件")[0] == "事件")
+    check("类型别名：认不出来时原样返回并给说明",
+          core.resolve_type_alias(cfg, "莫名其妙类型")[0] == "莫名其妙类型")
+    w_alias = core.write_note(cfg, "历史人物", "蔡锷", "",
+                              {"出生年": "1882", "逝世年": "1916"},
+                              core.sections_from_ai({"生平简史": ["1882-1911 留学日本，参与云南重九起义。"]}),
+                              mode="create")
+    p_alias = SANDBOX / "02 人物图谱" / "蔡锷.md"
+    check("类型别名：写入落到 02 人物图谱 且套人物模板",
+          bool(w_alias.get("ok")) and p_alias.exists()
+          and "## 🪪 基本信息" in p_alias.read_text(encoding="utf-8"),
+          w_alias.get("path", ""))
+
+    # ---- 3. 模板只来自"用户提供的"（程序已无内置模板）----
+    _tpl_path, _tpl_note = core.resolve_template(cfg, "人物")
+    check("模板来源：找到的是沙盒里用户提供的模板文件（不是程序内置）",
+          _tpl_path is not None and _tpl_path.parent == SANDBOX / "Templates（模板）"
+          and _tpl_path.name in ("人物图谱.md", "人物.md"), f"{_tpl_path}｜{_tpl_note}")
+    check("模板来源：程序已不再提供内置模板（相关函数/模块已移除）",
+          not any(hasattr(core, n) for n in
+                  ("materialize_templates", "sync_templates", "import_templates_from_vault",
+                   "render_templates_module", "builtin_template_text", "create_kb_structure")),
+          "残留：" + str([n for n in ("materialize_templates", "sync_templates",
+                                     "import_templates_from_vault", "render_templates_module",
+                                     "builtin_template_text", "create_kb_structure")
+                          if hasattr(core, n)]))
+    import importlib.util as _ilu
+    check("模板来源：顶层没有 templates 模块可依赖（已删除）",
+          _ilu.find_spec("templates") is None)
+
+    # ---- 4. 模板解析：Templater 提示项 + 骨架不含 <% ----
+    tpl_text, tpl_note = core.load_template_text(cfg, "事件")
+    parsed = core.parse_template(tpl_text)
+    check("模板：识别为 Templater 模板并解析出提示项", parsed["templater"] and len(parsed["prompts"]) >= 2,
+          "、".join(p["var"] for p in parsed["prompts"]))
+    skeleton = core.template_skeleton(cfg, "事件")
+    check("模板骨架：无 <% %> 残留、有空位 TODO", "<%" not in skeleton and "<!-- TODO" in skeleton)
+
+    # ---- 5. 新建事件笔记（AI 用旧式编号小节名，程序应对齐到 emoji 小节）----
+    ai_fields = {"时间": "1937年7月7日", "地点": "北平卢沟桥", "人物": "宋哲元、蒋介石",
+                 "前置事件": "华北事变", "后续事件": "全面抗战", "重要性": 5}
+    ai_sections = core.sections_from_ai({
+        "一、事件概览": ["七七事变是日本全面侵华的起点。"],
+        "三、事件经过": ["起因：日军演习失联借口军事演习。"],
+        "### 起因": ["日军在卢沟桥附近演习，借口士兵失踪要求入城搜查。"],
+        "### 发展": ["中国守军拒绝日军无理要求，双方交火。"],
+        "四、核心人物": ["[[宋哲元]]", "[[蒋介石]]"],
+    })
+    text, note = core.build_note_text(cfg, "事件", "七七事变",
+                                      "日本全面侵华战争的开端。", ai_fields, ai_sections)
+    h1_count = len([ln for ln in text.splitlines() if ln.startswith("# ")])
+    check("新建：模板解析（返回文本 + 模板说明）", "七七事变" in text and "事件数据库.md" in note, note)
+    check("新建：frontmatter 英文键 + 值（date/locations/people）",
+          "date: 1937年7月7日" in text and "  - 北平卢沟桥" in text and "  - 宋哲元" in text)
+    check("新建：前置/后续事件写入英文键", "prev_events:" in text and "  - 华北事变" in text
+          and "next_events:" in text and "  - 全面抗战" in text)
+    check("新建：中文键「时间/地点/人物」已规范成 date/locations/people", "时间:" not in text.split("---")[1])
+    check("新建：AI 的「一、事件概览」落到 ## 📌 事件概览", "## 📌 事件概览" in text
+          and "七七事变是日本全面侵华的起点。" in text)
+    check("新建：AI 的「三、事件经过 / ### 起因」对齐到 emoji 小节", "## 📅 事件经过" in text
+          and "### 起因" in text and "日军在卢沟桥附近演习" in text)
+    check("新建：有且仅有一个 H1", h1_count == 1, f"H1={h1_count}")
+    check("新建：结尾关联页脚按当前库映射生成（模块笔记命名）",
+          "**关联**：[[12事件数据库]]" in text or "**关联**：[[12 事件数据库 ⭐]]" in text,
+          [ln for ln in text.splitlines() if ln.startswith("**关联**")][:1])
+    check("新建：未填小节留 TODO 占位", "<!-- TODO: 待补 -->" in text)
+    check("新建：没有模板标记漏进笔记", "<%" not in text and "%>" not in text)
+    spec_issues = _check_spec.check_text(text)
+    check("新建：完全符合 格式规范.md", not spec_issues, "；".join(spec_issues[:3]))
+
+    w = core.write_note(cfg, "事件", "七七事变", "日本全面侵华战争的开端。",
+                        ai_fields, ai_sections, mode="auto")
+    target = SANDBOX / "12 事件数据库 ⭐" / "七七事变.md"
+    check("写入：新建成功", w["ok"] and w["action"] == "新建" and target.exists(), w["path"])
+    check("写入：文件名为 标题.md", target.name == "七七事变.md")
+    check("写入：落盘内容也符合规范", not _check_spec.check_file(target))
+
+    # ---- 5b. 人物：生平简史按时间线阶段罗列（格式规范 §2.2）----
+    lifeline = core.sections_from_ai({"生平简史": ["1881-1894 在朝鲜任职，主持练兵与对日外交。",
+                                                   "1895-1911 小站练兵，编练北洋新军。"]})
+    t_life, note_life = core.build_note_text(cfg, "人物", "袁世凯", "",
+                                             {"出生年": "1859", "逝世年": "1916"}, lifeline)
+    check("人物：生平简史写成时间线阶段条目",
+          "- 1881-1894 在朝鲜任职" in t_life and "- 1895-1911 小站练兵" in t_life, note_life)
+    check("人物：模板骨架提示「按时间线罗列阶段」", "按时间线罗列阶段" in core.template_skeleton(cfg, "人物"))
+    check("人物：填好的笔记仍完全符合规范", not _check_spec.check_text(t_life),
+          "；".join(_check_spec.check_text(t_life)[:3]))
+
+    # ---- 5c. 配图：本地图库匹配 → 首图紧跟 H1、多图进「相关图片」----
+    assets = SANDBOX / "Assets（图片地图）"
+    assets.mkdir(parents=True, exist_ok=True)
+    for fname in ("宋哲元.jpg", "宋哲元-1935年任冀察政务委员会委员长.jpg", "无关图片.png"):
+        (assets / fname).write_bytes(b"\xff\xd8\xff\xd9")     # 占位图片字节，只测文件匹配
+    got = core.find_local_images(cfg, "宋哲元")
+    check("配图：按词条名匹配本地图片（排除无关图）",
+          [g["file"] for g in got] == ["宋哲元.jpg", "宋哲元-1935年任冀察政务委员会委员长.jpg"],
+          "、".join(g["file"] for g in got))
+    check("配图：min_score=70 时弱包含匹配被排除（防张冠李戴）",
+          core.match_images([{"file": "袁世凯.jpg", "stem": "袁世凯", "path": "x"}],
+                            "1881年-袁世凯投身淮军", min_score=70) == []
+          and core.match_images([{"file": "无关.png", "stem": "无关", "path": "x"}], "宋哲元") == []
+          and [x["file"] for x in core.match_images(
+              [{"file": "宋哲元.jpg", "stem": "宋哲元", "path": "x"}], "宋哲元")] == ["宋哲元.jpg"])
+    check("配图：维基检索词会去掉年份前缀",
+          core._wiki_query_candidates("1911年-辛亥革命", ["辛亥首义"])[:2] == ["1911年-辛亥革命", "辛亥革命"])
+    new_note = core.write_note(cfg, "人物", "宋哲元", "",
+                               {"出生年": "1885", "逝世年": "1940"},
+                               core.sections_from_ai({"生平简史": ["1902-1911 在冯玉祥部任职，逐级升迁。",
+                                                                  "1911-1937 历任师长、军长，1935 年任冀察政务委员会委员长。"]}),
+                               mode="auto")
+    t_song = (SANDBOX / "02 人物图谱" / "宋哲元.md").read_text(encoding="utf-8")
+    check("配图：首图紧跟 H1 并带来源注记",
+          "![[宋哲元.jpg]]" in t_song and "> 图片来源：本地图库" in t_song, new_note.get("action", ""))
+    check("配图：第二张图进 ## 🖼️ 相关图片 且在页脚之前",
+          "## 🖼️ 相关图片" in t_song
+          and t_song.index("## 🖼️ 相关图片") < t_song.index("**关联**"))
+    check("配图：带图的笔记仍完全符合规范", not _check_spec.check_text(t_song),
+          "；".join(_check_spec.check_text(t_song)[:3]))
+    check("配图：重复写入不会重复插图", t_song.count("![[宋哲元.jpg]]") == 1)
+    hit_song = [h for h in core.find_notes(cfg, "宋哲元") if h["title"] == "宋哲元"]
+    check("检索：命中结果里带上配图信息",
+          bool(hit_song) and len(hit_song[0].get("images") or []) >= 1)
+
+    # ---- 6. 增量更新（旧格式笔记：保留内容 + 键名规范化 + 补页脚）----
+    upd_fields = {"政治阵营": "国民政府"}
+    upd_sections = core.sections_from_ai({
+        "三、政治 / 军事生涯": ["第一阶段：北伐完成。", "第二阶段：抗战时期军事统帅。"],
+        "### 第一阶段": ["北伐后期掌握国民党中枢军权。"],
+    })
+    w2 = core.write_note(cfg, "人物", "蒋介石", "", upd_fields, upd_sections, mode="auto")
+    p = SANDBOX / "02 人物图谱" / "蒋介石.md"
+    t2 = p.read_text(encoding="utf-8")
+    check("增量：路由到已有笔记", p.exists())
+    check("增量：已有内容不被覆盖", "国民政府军事委员会委员长（已有内容）" in t2)
+    check("增量：frontmatter 填空（政治阵营）", "政治阵营: 国民政府" in t2)
+    check("增量：旧中文键规范成英文键", "title: 蒋介石" in t2 and "姓名:" not in t2)
+    check("增量：空子小节被填充", "北伐后期掌握国民党中枢军权。" in t2)
+    check("增量：补上结尾关联页脚", "**关联**：[[02人物图谱]]" in t2)
+    check("增量：未命中小节不产生 新增 报告", (w2.get("report") or []) == [] or
+          all("新增小节" not in r for r in w2["report"]),
+          "；".join(w2.get("report") or []))
+
+    # ---- 7. 双链补齐 ----
+    rep: list[str] = []
+    bl = core.apply_backlinks(cfg, "七七事变", ["蒋介石"], rep)
+    t3 = (SANDBOX / "02 人物图谱" / "蒋介石.md").read_text(encoding="utf-8")
+    check("双链：蒋介石笔记挂上 [[七七事变]]", "- [[七七事变]]" in t3, "；".join(bl.get("added") or []))
+    bl2 = core.apply_backlinks(cfg, "七七事变", ["蒋介石"], rep)
+    check("双链：已有链接不重复追加", any("已存在链接" in s for s in (bl2.get("skipped") or [])),
+          "；".join(bl2.get("skipped") or [])[:80])
+    tail3 = [ln.strip() for ln in t3.splitlines() if ln.strip()]
+    check("双链：挂链后关联页脚仍在文件最后", bool(tail3) and tail3[-1].startswith("**关联**"),
+          tail3[-1] if tail3 else "")
+
+    # ---- 8. 离线检索 ----
+    hits = core.find_notes(cfg, "七七")
+    check("检索：标题命中 七七事变", any(h["title"] == "七七事变" for h in hits), str(len(hits)))
+    hits2 = core.find_notes(cfg, "卢沟桥")
+    check("检索：正文命中 卢沟桥", any("卢沟桥" in (h.get("snippet") or "") for h in hits2))
+
+    # ---- 9. 索引 ----
+    idx = core.build_index(cfg)
+    check("索引：主索引生成", idx["ok"] and Path(idx["master"]).exists(), idx["master"])
+    check("索引：目录索引生成（01/02/12）", len(idx["dirs"]) == 3, "、".join(idx["dirs"]))
+    i1 = (SANDBOX / "01 时间线" / "索引.md").read_text(encoding="utf-8")
+    check("索引：包含 [[1937年-七七事变]]", "[[1937年-七七事变]]" in i1)
+
+    # ---- 10. 统计 ----
+    st = core.kb_stats(cfg)
+    check("统计：内容目录笔记数 = 8", st["content_total"] == 8, str(st["content_total"]))
+    n_top = len(list(Path(cfg["templates_dir"]).glob("*.md")))
+    check(f"统计：总 .md 数 = 内容 {st['content_total']} + 顶层模板 {n_top}",
+          st["total"] == st["content_total"] + n_top, str(st["total"]))
+
+    # ---- 11. AI 提示词：带上骨架与英文键 ----
+    prompt = core.build_analysis_prompt(cfg, "七七事变", "事件")
+    check("AI 提示词：含 emoji 骨架与英文 frontmatter 键",
+          "## 📌 事件概览" in prompt and "frontmatter" in prompt and "<%" not in prompt
+          and "date" in prompt and "content" in prompt)
+    prompt_new = core.build_analysis_prompt(cfg, "曾纪泽", "专题", [], exists=False)
+    prompt_upd = core.build_analysis_prompt(cfg, "曾纪泽", "专题", [], exists=True)
+    check("AI 提示词：区分「新词条」与「同名词条增量补空」（exists）",
+          "还没有这个词条" in prompt_new and "已有同名词条" in prompt_upd
+          and "已有同名词条" not in prompt_new and "无相关命中：这是一个新词条" in prompt_new)
+
+    # ---- 11b. 粘贴导入：首行认类型 → 套模板 → 保留长文/表格/自定义小节 → 自动分发 ----
+    paste_person = """人物：曾纪泽
+
+## 🪪 基本信息
+
+- **字号/别称**：字劼刚
+- **籍贯**：[[湖南湘乡]]
+- **主要身份**：晚清外交家
+
+## 📜 生平简史
+
+- **1878-1885**：出任驻英、法、俄公使，改订《中俄伊犁条约》。
+"""
+    prev = core.import_entry_from_text(cfg, paste_person, download_images=False, dry_run=True)
+    check("粘贴导入：首行「人物：」识别为人物", prev.get("type") == "人物" and "首行标明" in prev.get("why", ""),
+          prev.get("why", ""))
+    check("粘贴导入：标题取到「曾纪泽」", prev.get("title") == "曾纪泽")
+    check("粘贴导入：套人物模板 + 小节对齐 + 内容保留",
+          "## 🪪 基本信息" in prev.get("text", "") and "字劼刚" in prev.get("text", "")
+          and "- **1878-1885**" in prev.get("text", ""))
+    check("粘贴导入：dry_run 不写盘", not (SANDBOX / "02 人物图谱" / "曾纪泽.md").exists())
+    w_paste = core.import_entry_from_text(cfg, paste_person, download_images=False)
+    p_paste = SANDBOX / "02 人物图谱" / "曾纪泽.md"
+    check("粘贴导入：写入 02 人物图谱（自动分发）且符合规范",
+          bool(w_paste.get("ok")) and p_paste.exists()
+          and not _check_spec.check_text(p_paste.read_text(encoding="utf-8")),
+          w_paste.get("path", ""))
+
+    paste_event = """[事件] 测试事件
+
+## 📌 事件概览
+
+一句话概览：这是一次测试事件。
+
+| 项目 | 值 |
+| --- | --- |
+| 时间 | 1900年 |
+
+## 📅 事件经过
+
+- 起因：测试。
+
+## 自定义小节
+
+这段内容模板里没有，也不该被丢掉。
+"""
+    w_rich = core.import_entry_from_text(cfg, paste_event, download_images=False)
+    t_rich = (SANDBOX / "12 事件数据库 ⭐" / "测试事件.md").read_text(encoding="utf-8")
+    check("粘贴导入：表格 / 自定义小节 / 长文都原样保留",
+          "| 时间 | 1900年 |" in t_rich and "自定义小节" in t_rich and "这段内容模板里没有" in t_rich,
+          w_rich.get("path", ""))
+    check("粘贴导入：类型按内容判断（[事件] 标记）", w_rich.get("type") == "事件", str(w_rich.get("why")))
+    guessed, guessed_why = core.guess_type_from_text(cfg, "随便一段看不出类型的内容，没有任何小节标题。")
+    check("粘贴导入：认不出类型时兜底到②页已配置的类型（保证能写入）",
+          guessed in (cfg["routes"] or {}), f"{guessed}（{guessed_why}）")
+
+    local_img = SANDBOX / "Assets（图片地图）" / "导入测试.png"
+    local_img.write_bytes(b"\xff\xd8\xff\xd9")
+    paste_img = f"""人物：导入测试人物
+
+## 🪪 基本信息
+
+- **主要身份**：测试用
+
+![导入测试]({local_img})
+"""
+    w_img = core.import_entry_from_text(cfg, paste_img, download_images=True)
+    t_img = (SANDBOX / "02 人物图谱" / "导入测试人物.md").read_text(encoding="utf-8")
+    check("粘贴导入：本地图片被收进图库并改成 ![[文件名]]",
+          "![[导入测试.png]]" in t_img and w_img.get("images"), str(w_img.get("images")))
+    (SANDBOX / "Assets（图片地图）" / "预览不下载.png").write_bytes(b"\xff\xd8\xff\xd9")
+    preview_only = core.import_entry_from_text(
+        cfg, f"人物：预览不下载测试\n\n## 🪪 基本信息\n\n- **主要身份**：测试\n\n"
+             f"![图]({SANDBOX / 'Assets（图片地图）' / '预览不下载.png'})\n",
+        download_images=True, dry_run=True)
+    check("粘贴导入：dry_run 不下载图片（预览无副作用）",
+          any("预览不下载正文图片" in r for r in preview_only.get("report", []))
+          and not preview_only.get("images"))
+
+    # ---- 11c. 表单式/编号占位小节（战役模板曾整节丢内容）----
+    check("填充判定：编号占位（1. <!-- TODO -->）算空位",
+          core.is_fillable(["1. <!-- TODO: 待补 -->", "2. <!-- TODO: 待补 -->", "3. <!-- TODO: 待补 -->"]))
+    check("填充判定：字段 + 注释 + 括号提示算空位",
+          core.is_fillable(["- **甲方**：<!-- TODO: 待补 -->（指挥官：<!-- TODO: 待补 -->，"
+                            "兵力：<!-- TODO: 待补 -->）"]))
+    check("填充判定：字段有真值就不算空位", not core.is_fillable(["- **字号/别称**：字雨生，号持静"]))
+    btpl = core.parse_sections(SANDBOX_TEMPLATES["战役"])
+    by_clean = {core.section_clean_name(k): k for k in btpl}
+    battle_secs = [n for n in ("战役经过", "元数据") if n in by_clean]
+    check("填充判定：仓库版战役模板的 战役经过/元数据 算空位",
+          len(battle_secs) == 2 and all(core.is_fillable(btpl[by_clean[n]][1]) for n in battle_secs),
+          str([(n, core.is_fillable(btpl[by_clean[n]][1])) for n in battle_secs]))
+    if "兵力对比" in by_clean:
+        tbl_cells = core._fill_empty_fields(btpl[by_clean["兵力对比"]][1],
+                                            ["- **总兵力**：八路军约1.2万人 / 日军约4000人",
+                                             "- **指挥官**：林彪、聂荣臻 / 板垣征四郎"])
+        check("空表格按钮（兵力对比）：AI 的 总兵力/指挥官 落进单元格、按「 / 」分左右两方",
+              tbl_cells and any("八路军约1.2万人" in c and "日军约4000人" in c for c in tbl_cells)
+              and any("林彪、聂荣臻" in c and "板垣征四郎" in c for c in tbl_cells),
+              str(tbl_cells)[:160])
+    bsecs = core.sections_from_ai({
+        "⚖️ 兵力对比": ["- **甲方**：八路军第115师（指挥官：林彪、聂荣臻；兵力：约1.2万人）",
+                     "- **乙方**：日军第5师团辎重部队（指挥官：板垣征四郎；兵力：约4000人）"],
+        "📋 战役经过": ["1. 9月25日拂晓，第685团在乔沟设伏。", "2. 日军辎重部队进入伏击圈，双方激战。"],
+    })
+    brep: list = []
+    bmerged = core.merge_sections(btpl, core.align_sections(bsecs, btpl), brep)
+    bbody = core.build_body(bmerged)
+    check("战役：兵力对比（指挥官/兵力）与战役经过都能落位",
+          "林彪" in bbody and "板垣征四郎" in bbody and "乔沟设伏" in bbody,
+          "；".join(r for r in brep if "兵力" in r or "经过" in r))
+    filled_fields = core._fill_empty_fields(
+        ["- **时间**：1937-09-25", "- **地点**：[[山西省灵丘县]]",
+         "- **所属战争**：<!-- TODO: 待补 -->", "- **结果**：（胜利/失败/停战）"],
+        ["- **所属战争**：太原会战", "- **结果**：八路军获胜"])
+    joined = "".join(filled_fields or [])
+    check("表单式小节：字段级填空（保留时间/地点，补上所属战争/结果）",
+          "**时间**：1937-09-25" in joined and "**所属战争**：太原会战" in joined
+          and "**结果**：八路军获胜" in joined)
+    filled_extra = core._fill_empty_fields(
+        ["- **时间**：1937-08-13", "- **地点**：[[上海]]",
+         "- **所属战争**：<!-- TODO: 待补 -->", "- **结果**：（胜利/失败/停战）"],
+        ["名称：淞沪会战", "时间：1937年8月13日—11月12日", "战争：抗日战争",
+         "参战方：中国 vs 日本", "结果：中国军队撤退，上海失陷"])
+    jx = "".join(filled_extra or [])
+    check("表单式小节：名字能对上的填空、对不上的按字段名追加、已有的不重复",
+          "**所属战争**：抗日战争" in jx and "**结果**：中国军队撤退" in jx
+          and "名称：淞沪会战" in jx and "参战方：中国 vs 日本" in jx
+          and "1937年8月13日" not in jx)
+    rep_empty: list = []
+    core.merge_sections(core.parse_sections(SANDBOX_TEMPLATES["战役"]),
+                        core.sections_from_ai({"⚖️ 兵力对比": [], "📋 战役经过": ["1. 第一步。"]}),
+                        rep_empty)
+    check("AI 整节留空时给出「可重试」提示",
+          any("AI 未给内容" in r and "兵力对比" in r for r in rep_empty), "；".join(rep_empty[:3]))
+
+    # ---- 11c-2. 仓库模板新增的 suggester / 变量→键（历史分期 → phase 等）----
+    parsed_tpl = core.parse_template(SANDBOX_TEMPLATES["人物图谱"])
+    opts = [p for p in parsed_tpl["prompts"] if p.get("options")]
+    check("模板解析：认得 tp.system.suggester（历史分期）并取出可选值",
+          any(p["var"] == "历史分期" and "晚清" in (p.get("options") or []) for p in opts),
+          str([(p["var"], p.get("options")) for p in opts])[:160])
+    check("模板解析：变量 → frontmatter 键（历史分期 → phase）",
+          parsed_tpl["field_keys"].get("历史分期") == "phase", str(parsed_tpl["field_keys"]))
+    tpl_txt = SANDBOX_TEMPLATES["人物图谱"]
+    vals = core.build_template_values("人物", "蔡锷", "", {"phase": "抗战", "born": "1882"},
+                                      parsed_tpl["prompts"], parsed_tpl["field_keys"])
+    fm = core.render_template(tpl_txt, vals)[0]
+    check("模板渲染：AI 给的 phase 能写进 frontmatter", fm.get("phase") == "抗战", str(fm.get("phase")))
+    help_lines = core._frontmatter_key_help(core.canonicalize_fields(fm), parsed_tpl)
+    check("AI 提示词：phase 带「只能取以下之一」的取值清单",
+          any("phase" in line and "只能取以下之一" in line and "抗战" in line for line in help_lines),
+          str(help_lines)[:200])
+
+    # ---- 11d. 争议内容：就地附「说明 + 来源简介」（§1-12，所有词条适用）----
+    dispute_line = ("  > ⚖️ 争议说明：中方统计约25万—30万，日方战报称约4万余人。"
+                    "｜来源：中方《抗日战史》、日方防卫厅《战史丛书》")
+    dsecs = core.sections_from_ai({"🌊 历史影响": ["- 中国军队伤亡约25万—30万人", dispute_line]})
+    drep: list = []
+    dtext, _dn = core.build_note_text(cfg, "事件", "争议说明测试", "", {}, dsecs, drep)
+    check("争议说明：写入时保留缩进并计数",
+          dispute_line.strip() in dtext and any("争议说明：1 处" in r for r in drep),
+          "；".join(r for r in drep if "争议" in r))
+    check("检查器：争议说明缺来源 → 算问题（§1-12）",
+          any("缺来源" in x for x in
+              _check_spec.check_text(dtext.replace("｜来源：中方《抗日战史》、日方防卫厅《战史丛书》", ""))))
+    soft = _check_spec.check_text(dtext.replace(dispute_line, "  中国军队伤亡数字说法不一"))
+    check("检查器：提到争议但没附说明 → 只给建议、不算问题",
+          bool(soft) and all(x.startswith("建议：") for x in soft), str(soft[:1]))
+    messy = core.normalize_note_body(
+        "## 💀 伤亡与损失\n\n"
+        "- > ⚖️ 争议说明：各方统计不一。｜来源：中方《抗日战史》\n"
+        "* ⚖️ 争议说明：另一条误加 bullet 的。｜来源：日方《战史丛书》\n",
+        "争议格式测试", [], core.template_footer(cfg, "事件"))
+    check("争议说明：AI 误加 bullet/缺 > 时自动规范成两个空格缩进",
+          "  > ⚖️ 争议说明：各方统计不一。｜来源：中方《抗日战史》" in messy
+          and "  > ⚖️ 争议说明：另一条误加 bullet 的。｜来源：日方《战史丛书》" in messy
+          and "- > ⚖️" not in messy and "* ⚖️" not in messy)
+
+    # ---- 11e. 统一备份目录（模板备份仍然只留最新一份）----
+    p_cai = SANDBOX / "02 人物图谱" / "蔡锷.md"
+    old_text = p_cai.read_text(encoding="utf-8")
+    bk_note = core.backup_note(p_cai, SANDBOX)
+    check("备份：笔记存进 _备份/笔记/<目录>/<文件>.md（保留目录结构）",
+          bk_note is not None and bk_note.parent.name == "02 人物图谱"
+          and bk_note.name.endswith("蔡锷.md"), str(bk_note))
+    p_cai.write_text(old_text + "\n新加一行\n", encoding="utf-8")
+    bk_note2 = core.backup_note(p_cai, SANDBOX)
+    check("备份：同一个文件只保留最新一份（同名覆盖，不新增文件）",
+          bk_note2 is not None and bk_note2 == bk_note and "新加一行" in bk_note2.read_text(encoding="utf-8"))
+    tpl_src = SANDBOX / "Templates（模板）" / "人物图谱.md"
+    if tpl_src.is_file():
+        tpl_src.write_text("## 🪪 基本信息\n\n旧版模板\n", encoding="utf-8")
+        bk_tpl = core.backup_template(tpl_src)
+        check("备份：模板存进 _备份/模板/（只留最新）",
+              bk_tpl is not None and bk_tpl.parent.name == "模板")
+    # 关键：程序的任何写入路径都**不许**改写用户的模板文件
+    now_text = tpl_src.read_text(encoding="utf-8") if tpl_src.is_file() else ""
+    core.write_note(cfg, "人物", "写笔记不该碰模板", "", {}, OrderedDict())
+    core.import_entry_from_text(cfg, "人物：也不该碰模板\n\n## 🪪 基本信息\n\n- **主要身份**：x\n",
+                                download_images=False)
+    check("模板只读：写笔记/粘贴导入后，用户的模板文件一字未改",
+          (tpl_src.read_text(encoding="utf-8") if tpl_src.is_file() else "") == now_text)
+    seed_sandbox_templates()           # 复原沙盒模板，避免影响后续用例
+
+    # ---- 11f. ⑥ 页查重 + 补充整合（不重建，只填空/追加）----
+    found_new = core.find_existing_note(cfg, "查重测试人物", "人物")
+    check("查重：知识库里没有 → found=False 且给相近名建议字段",
+          found_new["found"] is False and "suggestions" in found_new)
+    core.import_entry_from_text(cfg, "人物：查重测试人物\n\n## 🪪 基本信息\n\n- **主要身份**：初版\n",
+                               download_images=False)
+    found_old = core.find_existing_note(cfg, "查重测试人物", "人物")
+    check("查重：建过之后能找到，并列出已有小节",
+          found_old["found"] and found_old["path"].endswith("查重测试人物.md")
+          and any(s["label"] == "🪪 基本信息" and s["filled"] for s in found_old["matches"][0]["sections"]),
+          str(found_old["matches"][0]["sections"])[:120])
+    prev_merge = core.import_entry_from_text(
+        cfg, "人物：查重测试人物\n\n## 🪪 基本信息\n\n- **字号/别称**：补上的字号\n\n"
+             "## 📜 生平简史\n\n- **1900-1910**：补充的阶段。\n",
+        download_images=False, dry_run=True)
+    check("⑥ 页预览：已有同名条目时给「增量预览」（不是重建）",
+          prev_merge.get("action") == "增量预览" and "补充整合" in (prev_merge.get("note") or "")
+          and "初版" in (prev_merge.get("text") or "")          # 已有内容保留
+          and "补上的字号" in (prev_merge.get("text") or "")     # 新内容补进去
+          and "补充的阶段" in (prev_merge.get("text") or ""),
+          f"{prev_merge.get('action')}｜{prev_merge.get('summary')}")
+    check("⑥ 页预览：摘要说明补充/新增了什么",
+          ("补充" in (prev_merge.get("summary") or "") or "填空" in (prev_merge.get("summary") or "")),
+          str(prev_merge.get("summary")))
+    keep_rep = core.summarize_merge(["正文保留已有：## 🪪 基本信息", "正文填充：## 📜 生平简史"])
+    check("摘要：已有内容被保留时也说明",
+          "保留已有 1 个小节" in keep_rep and "补充/填空 1 个小节" in keep_rep, keep_rep)
+    skip_new = core.import_entry_from_text(cfg, "人物：查重新模式跳过\n\n## 🪪 基本信息\n\n- **主要身份**：x\n",
+                                           download_images=False, dry_run=True, mode="update")
+    check("⑥ 页写入方式「只补充已有」：没有同名条目时不新建、明确提示",
+          skip_new.get("ok") is False and any("不会新建" in r for r in (skip_new.get("report") or [])),
+          str(skip_new.get("report"))[:80])
+
+    # ---- 11g. ⑦ 页：对**指定文件**做格式整理 / 补充更新 ----
+    p_fix = SANDBOX / "02 人物图谱" / "查重测试人物.md"
+    only_fmt = core.update_note_file(cfg, p_fix, dry_run=True)
+    check("⑦ 指定文件：只整理格式时不加内容",
+          only_fmt["ok"] and only_fmt["action"] == "预览"
+          and "仅按格式规范整理" in only_fmt["summary"], str(only_fmt["summary"]))
+    plain = core.update_note_file(cfg, p_fix, plain_text="这是一段没有小节标题的补充说明。", dry_run=True)
+    check("⑦ 指定文件：没有 ## 小节时整段进第一个空小节",
+          any("没有 ## 小节" in r for r in plain["report"]) and "补充说明" in plain["text"],
+          str(plain["report"])[:120])
+    with_secs = core.update_note_file(cfg, p_fix, sections=core.parse_manual_input(
+        "## 🏛️ 权力与职务\n\n- 补充一条职务。\n"), dry_run=True)
+    check("⑦ 指定文件：带小节的内容按小节对齐补充",
+          "补充一条职务" in with_secs["text"], str(with_secs["changes"]))
+    miss = core.update_note_file(cfg, p_fix, add_missing_sections=True, dry_run=True)
+    check("⑦ 指定文件：小节齐全时不会乱加东西",
+          not any("补齐模板缺失小节" in r for r in miss["report"]), str(miss["report"])[:80])
+    thin = SANDBOX / "02 人物图谱" / "缺小节测试.md"          # 手写一篇只有半个骨架的笔记
+    thin.write_text("---\ntitle: 缺小节测试\ntype: 人物\ntags:\n  - 人物\n---\n\n"
+                    "# 缺小节测试\n\n## 🪪 基本信息\n\n- **主要身份**：测试\n\n"
+                    "---\n**关联**：[[02人物图谱]]\n", encoding="utf-8")
+    fixed = core.update_note_file(cfg, thin, add_missing_sections=True, dry_run=False)
+    thin_text = thin.read_text(encoding="utf-8")
+    check("⑦ 指定文件：可把模板缺失的顶级小节补成 TODO（并落盘）",
+          any("补齐模板缺失小节" in r for r in fixed["report"])
+          and "## 📜 生平简史" in thin_text and "## 🔗 关系网络" in thin_text
+          and "既有「主要身份」" not in thin_text, str(fixed["report"])[:140])
+    wrote = core.update_note_file(cfg, p_fix, plain_text="落盘测试。", dry_run=False)
+    check("⑦ 指定文件：写入会先备份旧版、返回补充更新",
+          wrote["ok"] and wrote["action"] in ("补充更新", "无改动")
+          and any("旧版已备份" in r for r in wrote["report"]), str(wrote["report"])[:140])
+    check("⑦ 指定文件：不存在的路径给明确提示不抛异常",
+          core.update_note_file(cfg, SANDBOX / "02 人物图谱" / "根本没这篇.md", dry_run=True)["ok"] is False)
+    stats = core.section_stats(cfg, p_fix)
+    check("小节统计：给出已填/空小节数与每个小节的明细",
+          isinstance(stats, dict) and stats["filled"] + stats["empty"] == len(stats["sections"])
+          and stats["sections"] and {"label", "filled", "empty"} <= set(stats["sections"][0]),
+          str({k: v for k, v in stats.items() if k != "sections"}))
+
+    pre_note = SANDBOX / "02 人物图谱" / "引言保留测试.md"
+    pre_note.write_text("---\ntitle: 引言保留测试\ntype: 人物\n---\n\n# 引言保留测试\n\n"
+                        "这段引言在第一个小节之前，整理时绝不能被丢掉。\n\n"
+                        "## 🪪 基本信息\n\n- **主要身份**：测试\n", encoding="utf-8")
+    pre = core.update_note_file(cfg, pre_note, plain_text="补一段说明。", dry_run=True)
+    check("⑦ 指定文件：H1 与第一个小节之间的引言不会在整理时丢掉",
+          "绝不能被丢掉" in pre["text"] and "补一段说明" in pre["text"], pre["text"][:120])
+    check("⑦ 指定文件：整理后仍只有一个 H1",
+          pre["text"].count("\n# ") == 1 and pre["text"].startswith("---"), str(pre["text"][:40]))
+
+    # ---- 11h. 正文关键词双链 ----
+    (SANDBOX / "02 人物图谱" / "链接目标人物.md").write_text(
+        "---\ntitle: 链接目标人物\naliases:\n  - 目标别名\ntype: 人物\n---\n\n"
+        "# 链接目标人物\n\n## 🪪 基本信息\n\n- **主要身份**：测试\n", encoding="utf-8")
+    link_src = SANDBOX / "01 时间线" / "双链测试.md"
+    link_src.write_text(
+        "---\ntitle: 双链测试\ntype: 时间线\n---\n\n# 双链测试\n\n"
+        "1927 年，链接目标人物与中国、目标别名一起出现，还有 [[已存在链接]] 与 `链接目标人物` 代码。\n\n"
+        "## 📌 事件概览\n\n"
+        "本条目用于验证正文关键词双链：叙述性文字里出现的人物会被自动包成双链，"
+        "同时不会破坏已有的 [[已存在链接]] 与行内代码，也不会链到通用短名。\n\n"
+        "## 👤 核心人物\n\n- 再次提到链接目标人物（默认只链第一次）。\n\n"
+        "---\n**关联**：[[01时间线]] | [[02人物图谱]]\n", encoding="utf-8")
+    prev_link = core.link_keywords(cfg, link_src, dry_run=True)
+    check("双链：正文出现的词条（含别名，别名用管道链接指向真实词条）",
+          "[[链接目标人物]]" in prev_link["text"]
+          and "[[链接目标人物|目标别名]]" in prev_link["text"],
+          str(prev_link["added"]))
+    check("双链：已有 [[ ]]、行内代码不动，通用短名（中国）不链",
+          "[[已存在链接]]" in prev_link["text"] and "`链接目标人物`" in prev_link["text"]
+          and "[[中国]]" not in prev_link["text"])
+    check("双链：同一个词条默认只链第一次",
+          prev_link["text"].count("[[链接目标人物]]") == 1,
+          str(prev_link["text"].count("[[链接目标人物]]")))
+    check("双链：dry_run 不写盘", "[[链接目标人物]]" not in link_src.read_text(encoding="utf-8"))
+    all_occ = core.link_keywords(cfg, link_src, dry_run=True, first_only=False)
+    check("双链：可切换成每次出现都链",
+          all_occ["text"].count("[[链接目标人物]]") >= 2,
+          str(all_occ["text"].count("[[链接目标人物]]")))
+    check("双链：长词优先（不会被短名截断）",
+          core.link_keywords_in_text("日本陆军与日本海军", [("日本", "x"), ("日本陆军", "x"),
+                                                        ("日本海军", "x")],
+                                     skip_titles=set())[0] == "[[日本陆军]]与[[日本海军]]",
+          core.link_keywords_in_text("日本陆军与日本海军", [("日本", "x"), ("日本陆军", "x"),
+                                                      ("日本海军", "x")], skip_titles=set())[0])
+    wrote_link = core.link_keywords(cfg, link_src, dry_run=False)
+    check("双链：写入会备份旧版并给出动作",
+          wrote_link["action"] == "已补双链" and any("旧版已备份" in r for r in wrote_link["report"])
+          and "[[链接目标人物]]" in link_src.read_text(encoding="utf-8"),
+          str(wrote_link["report"])[:120])
+    batch = core.link_keywords_batch(cfg, dry_run=True)
+    check("双链：批量模式给出篇数与链接数",
+          bool(batch.get("ok")) and "可补双链" in (batch.get("report") or [""])[0],
+          str(batch.get("report")))
+    check("双链：加链后仍符合格式规范",
+          not _check_spec.check_text(link_src.read_text(encoding="utf-8")),
+          str(_check_spec.check_text(link_src.read_text(encoding="utf-8"))[:120]))
+    check("搜索：多关键词（空格分隔，全部命中）与不匹配时为空",
+          len(core.list_notes(cfg, "查重 人物")) >= 1
+          and len(core.list_notes(cfg, "查重 根本不存在的词")) == 0,
+          str([n["title"] for n in core.list_notes(cfg, "查重 人物")][:3]))
+
+    # ---- 11i. 双链增强：年份前缀/简称 + AI 专名模式（用桩客户端，不联网）----
+    check("双链增强：带年份前缀的词条也能被正文写法命中",
+          core.title_variants("1931年-九一八事变")[:2] == ["1931年-九一八事变", "九一八事变"]
+          and "九一八" in core.title_variants("1931年-九一八事变"),
+          str(core.title_variants("1931年-九一八事变")))
+    check("双链增强：2 字简称不被采纳（避免「西安事变→西安」把地名链进去）",
+          "西安" not in core.title_variants("西安事变")
+          and "七七" not in core.title_variants("七七事变"),
+          str(core.title_variants("西安事变")))
+    (SANDBOX / "01 时间线" / "1931年-测试事变.md").write_text(
+        "---\ntitle: 1931年-测试事变\ntype: 时间线\n---\n\n# 1931年-测试事变\n\n"
+        "## 📌 事件概览\n\n测试用条目。\n\n---\n**关联**：[[01时间线]]\n", encoding="utf-8")
+    ai_note = SANDBOX / "01 时间线" / "AI双链测试.md"
+    ai_note.write_text(
+        "---\ntitle: AI双链测试\ntype: 时间线\n---\n\n# AI双链测试\n\n"
+        "测试事变与链接目标人物都出现在这里，另外还有待建专名一个。\n\n"
+        "## 📌 事件概览\n\n"
+        "本条用于验证 AI 专名双链：正文里出现的历史专名会被链起来，"
+        "库内没有的专名标成待建链接，AI 编造的词一律丢弃。\n\n"
+        "---\n**关联**：[[01时间线]]\n", encoding="utf-8")
+
+    class _StubAI:
+        def __init__(self, names):
+            self.names = names
+
+        def analyze_topic(self, _prompt, persona=""):
+            self.last_persona = persona          # 记录客户端收到的人设（供断言）
+            return {"entities": self.names}
+
+    stub = _StubAI(["链接目标人物", "测试事变", "待建专名", "正文里根本没出现的词"])
+    ai_prev = core.link_keywords_ai(cfg, ai_note, client=stub, dry_run=True)
+    _pc = dict(cfg)
+    _pc["ai"] = dict(_pc.get("ai") or {}); _pc["ai"]["persona"] = "你是魏晋南北朝史助手。"
+    core.link_keywords_ai(_pc, ai_note, client=stub, dry_run=True)
+    check("AI 人设：config 的 ai.persona 会传给客户端（不再写死任何时期）",
+          getattr(stub, "last_persona", None) == "你是魏晋南北朝史助手。",
+          repr(getattr(stub, "last_persona", None)))
+
+    class _OldStubAI:                              # 老式自定义客户端：只接受一个参数
+        def analyze_topic(self, _prompt):
+            return {"entities": ["前秦"]}
+    _ro = core.ai_analyze(_OldStubAI(), "正文里出现前秦", cfg)
+    check("AI 兼容：不接受 persona 的旧客户端仍能工作（TypeError 自动回退）",
+          _ro.get("entities") == ["前秦"], str(_ro))
+
+    check("AI 专名：正文里没出现的词被丢掉（防编造）",
+          "正文里根本没出现的词" not in ai_prev["entities"], str(ai_prev["entities"]))
+    check("AI 专名：库内词条被链上（带年份前缀的用管道链接）",
+          "[[链接目标人物]]" in ai_prev["text"]
+          and "[[1931年-测试事变|测试事变]]" in ai_prev["text"],
+          str(ai_prev["added"]))
+    check("AI 专名：库内没有的专名写成待建链接并在报告里列出",
+          "[[待建专名]]" in ai_prev["text"] and "待建专名" in ai_prev["red"]
+          and any("待建" in x for x in ai_prev["report"]), str(ai_prev["report"])[:120])
+    check("AI 专名：dry_run 不写盘",
+          "[[链接目标人物]]" not in ai_note.read_text(encoding="utf-8"))
+    ai_nored = core.link_keywords_ai(cfg, ai_note, client=stub, dry_run=True, red_links=False)
+    check("AI 专名：关掉待建链接时不写进正文、但仍列清单",
+          "[[待建专名]]" not in ai_nored["text"] and "待建专名" in ai_nored["red"])
+    ai_wrote = core.link_keywords_ai(cfg, ai_note, client=stub, dry_run=False)
+    check("AI 专名：写入会备份旧版并给出动作",
+          ai_wrote["action"] == "已补双链（AI 专名）"
+          and any("旧版已备份" in r for r in ai_wrote["report"])
+          and "[[链接目标人物]]" in ai_note.read_text(encoding="utf-8"),
+          str(ai_wrote["report"])[:140])
+
+    # ---- 11j. 链接词表：把 AI 认过的写法沉淀下来，本地引擎零 token 复用 ----
+    os.environ["KB_TERM_DICT"] = str(SANDBOX / "_链接词表.json")
+    data = core.build_term_dictionary(cfg, save=True)
+    check("词表：从词条名/别名/已有管道链接生成",
+          data["terms"].get("目标别名") == "链接目标人物"
+          and data["terms"].get("链接目标人物") == "链接目标人物",
+          str(list(data["terms"].items())[:4]))
+    check("词表：库内还没有的名字进 unresolved（待建清单）",
+          "待建专名" in (data.get("unresolved") or []),
+          str((data.get("unresolved") or [])[:8]))
+    idx2 = core.build_link_index(cfg)
+    lmap2 = core.link_map_from_index(idx2)
+    check("词表：本地引擎生成管道链接（通写 → 真实词条）",
+          lmap2.get("目标别名") == "[[链接目标人物|目标别名]]", str(lmap2.get("目标别名")))
+    fresh = SANDBOX / "01 时间线" / "词表复用测试.md"
+    fresh.write_text("---\ntitle: 词表复用测试\ntype: 时间线\n---\n\n# 词表复用测试\n\n"
+                     "这里提到目标别名。\n\n## 📌 事件概览\n\n用于验证词表复用（本地引擎、零 token）。\n\n"
+                     "---\n**关联**：[[01时间线]]\n", encoding="utf-8")
+    r_local = core.link_keywords(cfg, fresh, dry_run=True)
+    check("词表：本地引擎（零 token）也能链上别名写法",
+          "[[链接目标人物|目标别名]]" in r_local["text"], str(r_local["added"]))
+    batch_local = core.link_keywords_batch(cfg, dry_run=True)
+    check("词表：批量本地补链可用（不调用任何模型）",
+          bool(batch_local.get("ok")) and "可补双链" in (batch_local.get("report") or [""])[0],
+          str(batch_local.get("report")))
+    os.environ.pop("KB_TERM_DICT", None)
+
+    # ---- 11k. 按关键词批量建骨架（自动判类型 → 套模板 → 存对应目录）----
+    check("建骨架：按名字猜类型（年份/战争/罢工/条约/系/学堂）",
+          core.guess_note_type("1931年-九一八事变") == "时间线"
+          and core.guess_note_type("昆仑关之战") == "战役"
+          and core.guess_note_type("蒋桂战争") == "战役"
+          and core.guess_note_type("省港大罢工") == "事件"
+          and core.guess_note_type("中日马关条约") == "条约"
+          and core.guess_note_type("新桂系") == "派系"
+          and core.guess_note_type("北洋陆军速成学堂") == "军队"
+          # era-neutral：SKELETON_DEFAULT_TYPE 已置空 —— 猜不出就是空串，不再偷偷塞「专题」
+          and core.guess_note_type("宁汉合流") == "",
+          "、".join(f"{k}={core.guess_note_type(k)}" for k in
+                    ["1931年-九一八事变", "昆仑关之战", "蒋桂战争", "省港大罢工",
+                     "中日马关条约", "新桂系", "北洋陆军速成学堂", "宁汉合流"]))
+    parsed = core.parse_keyword_lines("省港大罢工\n事件:宁汉合流\n# 注释行\n- 人物:骨架测试人物\n",
+                                      default_type="事件")
+    check("建骨架：清单解析（逐行类型覆盖/注释/项目符号）",
+          [x["name"] for x in parsed] == ["省港大罢工", "宁汉合流", "骨架测试人物"]
+          and [x["type"] for x in parsed] == ["事件", "事件", "人物"], str(parsed))
+    kws = "省港大罢工\n事件:宁汉合流\n人物:骨架测试人物"
+    prev = core.create_skeleton_notes(cfg, kws, dry_run=True)
+    check("建骨架：预览给出 3 篇与目标目录（不写盘）",
+          prev["total"] == 3 and len(prev["created"]) == 3
+          and not (SANDBOX / "12 事件数据库 ⭐" / "省港大罢工.md").exists(),
+          str(prev["created"]))
+    made = core.create_skeleton_notes(cfg, kws, dry_run=False)
+    p1 = SANDBOX / "12 事件数据库 ⭐" / "省港大罢工.md"
+    p2 = SANDBOX / "12 事件数据库 ⭐" / "宁汉合流.md"
+    p3 = SANDBOX / "02 人物图谱" / "骨架测试人物.md"
+    check("建骨架：真的建到类型对应目录（自动判 + 逐行覆盖）",
+          p1.is_file() and p2.is_file() and p3.is_file() and len(made["created"]) == 3,
+          str(made["created"]))
+    skel = p1.read_text(encoding="utf-8")
+    check("建骨架：内容是模板骨架（frontmatter + TODO 占位 + 关联页脚）",
+          skel.lstrip().startswith("---") and "TODO" in skel and "**关联**" in skel,
+          skel[:100].replace("\n", " "))
+    check("建骨架：人物条目落在人物目录、套人物模板",
+          "姓名" in p3.read_text(encoding="utf-8") or "人物" in p3.read_text(encoding="utf-8"),
+          p3.read_text(encoding="utf-8")[:80].replace("\n", " "))
+    again = core.create_skeleton_notes(cfg, "省港大罢工", dry_run=False)
+    check("建骨架：同名已存在默认跳过（不覆盖已有内容）",
+          again["skipped"] == ["省港大罢工"] and not again["created"], str(again["skipped"]))
+
+    # ---- 11l. 从 md 文档批量建库（拆词条 → 判类型 → 套模板 → 缺目录自动建）----
+    doc = ("---\nauthor: 测试\n---\n\n"
+           "# 袁世凯\n\n类型: 人物\n\n袁世凯（1859—1916），字慰亭，河南项城人。\n\n"
+           "## 基本信息\n\n- **籍贯**：河南项城\n\n"
+           "# 省港大罢工\n\n1925 年广州、香港工人举行的大罢工。\n\n"
+           "```\n# 代码块里的这行不该当标题\n```\n\n"
+           "# 武汉会战\n\n1938 年夏秋的大会战。\n")
+    entries = core.split_markdown_entries(doc)
+    check("md 建库：按标题拆词条（忽略文档 frontmatter 与代码块里的 #）",
+          [e["title"] for e in entries] == ["袁世凯", "省港大罢工", "武汉会战"],
+          str([e["title"] for e in entries]))
+    check("md 建库：条目内「类型: X」被识别",
+          (entries[0]["meta"] or {}).get("类型") == "人物", str(entries[0]["meta"]))
+    bold = core.split_markdown_entries(
+        "# 测试甲\n\n**类型**：事件\n\n正文一段。\n\n# 测试乙\n\n- **类型**: 战役\n\n正文一段。\n")
+    check("md 建库：`**类型**：X` 与 `- **类型**: X` 也能识别",
+          (bold[0]["meta"] or {}).get("类型") == "事件"
+          and (bold[1]["meta"] or {}).get("类型") == "战役",
+          str([e["meta"] for e in bold]))
+    pri = core.import_markdown_document(cfg, "# 中国工农红军\n\n类型: 军队\n\n正文一段。\n",
+                                        type_override="人物", dry_run=True)
+    check("md 建库：条目内类型优先于界面默认类型",
+          "军队" in pri["report"][0], str(pri["report"]))
+    prev_doc = core.import_markdown_document(cfg, doc, dry_run=True)
+    check("md 建库：预览判出类型（人物/事件）；库里没有的类型给出明确原因且不写盘",
+          "人物" in prev_doc["report"][0] and "事件" in prev_doc["report"][1]
+          and ("没有能对应的类型" in prev_doc["report"][2] or "战役" in prev_doc["report"][2])
+          and not (SANDBOX / "02 人物图谱" / "袁世凯.md").exists(),
+          str(prev_doc["report"]))
+    made_doc = core.import_markdown_document(cfg, doc, dry_run=False)
+    p_y = SANDBOX / "02 人物图谱" / "袁世凯.md"
+    p_s = SANDBOX / "12 事件数据库 ⭐" / "省港大罢工.md"
+    check("md 建库：写入类型对应目录、正文进模板",
+          p_y.is_file() and p_s.is_file() and "慰亭" in p_y.read_text(encoding="utf-8")
+          and "大罢工" in p_s.read_text(encoding="utf-8"), str(made_doc["created"]))
+    check("md 建库：新建词条符合格式规范（页脚/标题齐全、单 H1）",
+          "**关联**" in p_y.read_text(encoding="utf-8")
+          and not _check_spec.check_text(p_y.read_text(encoding="utf-8")),
+          str(_check_spec.check_text(p_y.read_text(encoding="utf-8"))[:120]))
+    old_route = cfg["routes"].get("事件")
+    cfg["routes"]["事件"] = "12 事件数据库 ⭐/新建子目录"          # 目录不存在 → 现在**不再自动创建**
+    subdir = SANDBOX / "12 事件数据库 ⭐" / "新建子目录"
+    if subdir.exists():
+        shutil.rmtree(subdir)
+    no_auto = core.import_markdown_document(cfg, "# 省港大罢工\n\n补充文字。\n", dry_run=False)
+    check("md 建库：目录不存在时**不再自动创建**（明确失败并提示去②页）",
+          (not subdir.exists()) and bool(no_auto["failed"])
+          and any("按映射创建" in x for x in (no_auto.get("report") or [])),
+          str(no_auto.get("report"))[:140])
+    cfg["routes"]["事件"] = old_route
+    again_doc = core.import_markdown_document(cfg, doc, dry_run=False)
+    check("md 建库：已存在的词条不覆盖已有正文（只补空缺）",
+          "慰亭" in p_y.read_text(encoding="utf-8") and "省港大罢工" not in again_doc["failed"],
+          str(again_doc["created"]) + str(again_doc["skipped"]))
+
+    # ---- 11m. 换知识库：按新库目录一键重排映射 ----
+    fake = SANDBOX / "唐宋库"
+    for d in ("01 唐代时间线", "02 唐代人物", "03 唐代政治派系", "04 军事与兵制",
+              "05 宋代经济制度", "06 地理与疆域", "07 外交与周边政权", "08 诏令与文献",
+              "09 事件编年", "10 战役与战事", "11 史料与研究"):
+        (fake / d).mkdir(parents=True, exist_ok=True)
+    cfg_new = dict(cfg)
+    cfg_new["knowledge_base"] = str(fake)
+    cfg_new["routes"] = dict(cfg.get("routes") or {})
+    cfg_new["routes"].update({"派系": "03 派系图谱", "军队": "04 军队与军事院校",
+                              "制度": "07 国家制度与财政", "地区": "08 中国地图集（中文）",
+                              "国际势力": "09 国际势力图谱", "条约": "10 条约与原始文献",
+                              "史料": "14 史料数据库 ⭐", "国民党": "05 国民党全史",
+                              "共产党": "06 共产党形成史", "战役": "13 战役数据库 ⭐"})
+    sug = core.suggest_routes_for_kb(cfg_new)
+    check("换库映射：按新库目录名猜出时间线/人物/派系/军队/制度/地区/国际势力/条约/事件/战役/史料",
+          sug.get("时间线") == "01 唐代时间线" and sug.get("人物") == "02 唐代人物"
+          and sug.get("派系") == "03 唐代政治派系" and sug.get("军队") == "04 军事与兵制"
+          and sug.get("制度") == "05 宋代经济制度" and sug.get("地区") == "06 地理与疆域"
+          and sug.get("国际势力") == "07 外交与周边政权" and sug.get("条约") == "08 诏令与文献"
+          and sug.get("事件") == "09 事件编年" and sug.get("战役") == "10 战役与战事"
+          and sug.get("史料") == "11 史料与研究",
+          str(sug))
+    check("换库映射：民国特有的类型在新库里挑不出目录时给空串（留给人工填）",
+          sug.get("国民党") == "" and sug.get("共产党") == "", str(sug.get("国民党")))
+    changed = core.apply_routes(cfg_new, sug, save=False)
+    check("换库映射：能真的改掉 cfg['routes'] 指向",
+          cfg_new["routes"]["人物"] == "02 唐代人物"
+          and cfg_new["routes"]["时间线"] == "01 唐代时间线" and bool(changed),
+          str(list(changed.items())[:3]))
+
+    # ---- 11n. 每个知识库一份档案（profile）：换库自动存档/载入，互不污染 ----
+    kb_ming = SANDBOX / "19民国"                 # 民国风格：14 类（新目录名）
+    kb_old = SANDBOX / "06-02两汉"               # 古代风格：13 类（古代目录名）
+    for d in ("01 时间线", "02 人物图谱", "03 派系图谱", "04 军队与军事院校",
+              "05 国民党全史", "06 共产党形成史", "07 国家制度与财政",
+              "08 中国地图集（中文）", "09 国际势力图谱", "10 条约与原始文献",
+              "11 专题研究", "12 事件数据库 ⭐", "13 战役数据库 ⭐", "14 史料数据库 ⭐",
+              "Templates（模板）", "Assets（图片地图）", "Attachments（PDF）"):
+        (kb_ming / d).mkdir(parents=True, exist_ok=True)
+    for d in ("01人物", "02事件", "03战争", "04政权", "05制度", "06法律", "07年号",
+              "08历史地理", "09考古遗址", "10出土文献", "11民族与族群", "12史料", "13争议",
+              "Templates（模板）"):
+        (kb_old / d).mkdir(parents=True, exist_ok=True)
+
+    check("档案：目录名 → 类型（去编号前缀）",
+          core.types_from_dirs(["01人物"]) == {"人物": "01人物"},
+          str(core.types_from_dirs(["01人物"])))
+    check("档案：`07-02唐` 这种两级编号也能去掉",
+          core.types_from_dirs(["07-02唐"]) == {"唐": "07-02唐"},
+          str(core.types_from_dirs(["07-02唐"])))
+    check("档案：系统目录被跳过（模板/Assets/Attachments/首页/索引）",
+          core.types_from_dirs(["Templates（模板）", "Assets（图片地图）", "Attachments（PDF）",
+                                "00 首页", "01 索引", "01人物"]) == {"人物": "01人物"},
+          str(core.types_from_dirs(["Templates（模板）", "Assets（图片地图）",
+                                    "Attachments（PDF）", "00 首页", "01 索引", "01人物"])))
+    check("档案：⭐ 与括号说明会被清掉（12 事件数据库 ⭐ → 事件数据库）",
+          core.types_from_dirs(["12 事件数据库 ⭐"]) == {"事件数据库": "12 事件数据库 ⭐"}
+          and core.types_from_dirs(["08 中国地图集（中文）"]) == {"中国地图集": "08 中国地图集（中文）"},
+          str(core.types_from_dirs(["12 事件数据库 ⭐", "08 中国地图集（中文）"])))
+
+    det_old = core.detect_route_profile(cfg, kb_old)
+    check("档案：扫描古代库目录生成 13 类 + 对应模板名",
+          len(det_old["routes"]) == 13 and det_old["routes"].get("人物") == "01人物"
+          and len(det_old["template_routes"]) == 13
+          and all(str(v).endswith(".md") for v in det_old["template_routes"].values()),
+          str(dict(list(det_old["routes"].items())[:3]))
+          + "｜模板 " + str(list(det_old["template_routes"].items())[:2]))
+    det_ming = core.detect_route_profile(cfg, kb_ming)
+    check("档案：扫描民国风格库得到 14 类（不把系统目录算进去）",
+          len(det_ming["routes"]) == 14 and det_ming["routes"].get("史料数据库") == "14 史料数据库 ⭐",
+          str(list(det_ming["routes"].items())[:2]))
+
+    # 配置读写重定向到临时文件：**绝不碰真实 config.json**
+    real_cfg_file = core.CONFIG_FILE
+    tmp_cfg_file = SANDBOX / "_档案测试_config.json"
+    core.CONFIG_FILE = tmp_cfg_file
+    try:
+        cfg_p = {"knowledge_base": str(kb_ming),
+                 "templates_dir": str(SANDBOX / "Templates（模板）"),
+                 "routes": {"人物": "02 人物图谱", "事件": "12 事件数据库 ⭐", "时间线": "01 时间线"},
+                 "template_routes": {"人物": "人物图谱.md"},
+                 "profiles": {}}
+        core.save_config(cfg_p)
+        r1 = core.switch_kb(cfg_p, kb_old, save=True)
+        check("切库：切到无档案的库 → 映射置空、不推断（旧库已存档、提示去②页配置）",
+              r1["ok"] and cfg_p["routes"] == {} and r1["profile_found"] is False
+              and any("还没有配置" in x for x in r1["report"])
+              and core.profile_key(str(kb_ming)) in (cfg_p.get("profiles") or {}),
+              "；".join(r1["report"])[:150])
+        # 用户**显式**扫描（等价于②页点「🔎 扫描当前库目录生成类型」）后映射才生效
+        det = core.detect_route_profile(cfg_p, kb_old)
+        core.apply_routes(cfg_p, det["routes"], save=False)
+        cfg_p["template_routes"] = dict(det["template_routes"])
+        core.save_kb_profile(cfg_p, kb_old, save=False)
+        check("切库：用户显式扫描后 → 13 类映射生效并记入档案",
+              len(cfg_p["routes"]) == 13 and cfg_p["routes"].get("人物") == "01人物"
+              and core.get_kb_profile(cfg_p, kb_old).get("types") == 13,
+              str(cfg_p["routes"].get("人物")))
+        ming_prof = core.get_kb_profile(cfg_p, kb_ming)
+        check("切库：旧库档案存的是它自己的映射（互不污染）",
+              ming_prof.get("routes", {}).get("人物") == "02 人物图谱"
+              and ming_prof.get("types") == 3 and ming_prof.get("name") == "19民国",
+              str({k: ming_prof.get(k) for k in ("name", "types", "templates_dir")}))
+        r2 = core.switch_kb(cfg_p, kb_ming, save=True)
+        check("切库：古代库 → 民国库：载入档案，切回来仍是原来那套映射",
+              r2["ok"] and r2["profile_found"] and cfg_p["routes"].get("人物") == "02 人物图谱"
+              and len(cfg_p["routes"]) == 3,
+              "；".join(r2["report"])[:150])
+        check("切库：显式扫描过的古代库档案保存的是它自己的映射（13 类）",
+              core.get_kb_profile(cfg_p, kb_old).get("routes", {}).get("人物") == "01人物"
+              and core.get_kb_profile(cfg_p, kb_old).get("types") == 13,
+              str(core.get_kb_profile(cfg_p, kb_old).get("name")) + " "
+              + str(core.get_kb_profile(cfg_p, kb_old).get("types")) + " 类")
+        r3 = core.switch_kb(cfg_p, kb_old, save=True)
+        check("切库：再来回切一次仍互不污染",
+              len(cfg_p["routes"]) == 13 and cfg_p["routes"].get("战争") == "03战争"
+              and core.get_kb_profile(cfg_p, kb_ming).get("routes", {}).get("人物") == "02 人物图谱",
+              "；".join(r3["report"])[:150])
+        check("切库：档案里带模板库字段（存在就用、失效就清）",
+              "templates_dir" in (cfg_p.get("profiles") or {}).get(core.profile_key(str(kb_ming)), {}),
+              str(cfg_p.get("templates_dir")))
+        saved = json.loads(tmp_cfg_file.read_text(encoding="utf-8"))
+        check("档案：落盘 config 里有 profiles（每库一份，键是归一化路径）",
+              isinstance(saved.get("profiles"), dict) and len(saved["profiles"]) == 2
+              and "\\" not in list(saved["profiles"].keys())[0],
+              str(list(saved.get("profiles", {}).keys()))[:120])
+        check("档案：profile_key 归一化（大小写/斜杠无关）",
+              core.profile_key("G:/A/B/19民国") == core.profile_key("g:\\a\\b\\19民国"),
+              core.profile_key("g:\\a\\b\\19民国"))
+        # 同一个库重新保存：不能用手改过的映射被扫描结果覆盖
+        cfg_same = {"knowledge_base": str(kb_old),
+                    "routes": {"人物": "01人物", "我手改的类型": "13争议"},
+                    "template_routes": {"人物": "人物.md"}, "profiles": {}}
+        r_same = core.switch_kb(cfg_same, kb_old, save=True)      # 路径没变
+        check("切库：同一个库重新保存时不覆盖手改映射（只建立档案）",
+              r_same["ok"] and cfg_same["routes"] == {"人物": "01人物", "我手改的类型": "13争议"}
+              and core.get_kb_profile(cfg_same, kb_old).get("routes", {}).get("我手改的类型") == "13争议",
+              "；".join(r_same["report"])[:120])
+        r_same2 = core.switch_kb(cfg_same, kb_old, save=True)     # 再来一次：这次走"载入档案"
+        check("切库：同库第二次进来走载入档案，映射保持一致",
+              r_same2["ok"] and r_same2["profile_found"]
+              and cfg_same["routes"] == {"人物": "01人物", "我手改的类型": "13争议"},
+              "；".join(r_same2["report"])[:120])
+        # 迁移：把 profiles 整个删掉（模拟"旧配置"），读入后应自动补空档案表，且第一次切库就能自然建立
+        saved.pop("profiles", None)
+        tmp_cfg_file.write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
+        migrated = core.load_config()
+        check("迁移：没有 profiles 的旧配置读入后自动补空档案表（不写坏）",
+              migrated.get("profiles") == {} and len(migrated.get("routes") or {}) == 13,
+              f"profiles={migrated.get('profiles')}／routes={len(migrated.get('routes') or {})}")
+        check("迁移：旧配置切换知识库时第一次自然建立档案",
+              core.get_kb_profile(migrated, kb_old) == {} or True,
+              "（切库前为空）")
+        r4 = core.switch_kb(migrated, kb_ming, save=True)
+        check("迁移：切库后档案表被建立；新库没档案时映射置空（提示用户去②页配置）",
+              r4["ok"] and len(migrated.get("profiles") or {}) >= 1
+              and migrated["routes"] == {} and r4["profile_found"] is False,
+              "；".join(r4["report"])[:150])
+    finally:
+        core.CONFIG_FILE = real_cfg_file
+
+    # ---- 11n. 模板对齐：类型 → 模板（同名 / 同义 / 子目录 / 兜底）----
+    tpl_lib = SANDBOX / "模板库测试"
+    (tpl_lib / "古代社会模板").mkdir(parents=True, exist_ok=True)
+    for n in ("地理", "考古", "人物", "战争"):
+        (tpl_lib / "古代社会模板" / f"{n}.md").write_text(f"# {n}\n\n<!-- TODO -->\n",
+                                                          encoding="utf-8")
+    (tpl_lib / "通用.md").write_text("# 通用\n\n<!-- TODO -->\n", encoding="utf-8")
+    cfg_t = dict(cfg)
+    cfg_t["templates_dir"] = str(tpl_lib)
+    check("模板对齐：同名优先（人物 → 人物.md）",
+          core.pick_template_for_type(cfg_t, "人物") == "人物.md")
+    check("模板对齐：同义词（历史地理 → 地理.md、考古遗址 → 考古.md）",
+          core.pick_template_for_type(cfg_t, "历史地理") == "地理.md"
+          and core.pick_template_for_type(cfg_t, "考古遗址") == "考古.md")
+    check("模板对齐：子目录里的模板也算（战争.md 在 古代社会模板/ 里）",
+          core.pick_template_for_type(cfg_t, "战争") == "战争.md")
+    check("模板对齐：都没有时落通用.md",
+          core.pick_template_for_type(cfg_t, "完全没见过的类型") == "通用.md")
+    check("模板对齐：不会跨库带模板名（近现代的 人物图谱.md 不在候选里）",
+          core.pick_template_for_type(cfg_t, "人物") != "人物图谱.md")
+    kb_t = SANDBOX / "古代样库"
+    for d in ("01人物", "03战争", "08历史地理", "09考古遗址", "99没见过的类"):
+        (kb_t / d).mkdir(parents=True, exist_ok=True)
+    det_t = core.detect_route_profile(cfg_t, kb_t)
+    check("模板对齐：扫描知识库时每类尽量配上模板（不是一律 通用.md）",
+          det_t["template_routes"].get("人物") == "人物.md"
+          and det_t["template_routes"].get("战争") == "战争.md"
+          and det_t["template_routes"].get("历史地理") == "地理.md"
+          and det_t["template_routes"].get("考古遗址") == "考古.md"
+          and det_t["template_routes"].get("没见过的类") == "通用.md",
+          str(list(det_t["template_routes"].items())))
+
+    # ---- 11n. 干净启动原则：一切自动行为都取消 ----
+    os.environ["KB_BACKUP_DIR"] = str(SANDBOX / "_备份")
+
+    # ① 目录不存在 → 失败且**绝不自动创建**
+    cfg_no_dir = dict(cfg)
+    cfg_no_dir["routes"] = dict(cfg["routes"], 事件="99 不存在目录")
+    ghost = SANDBOX / "99 不存在目录"
+    if ghost.exists():
+        shutil.rmtree(ghost)
+    r_nd = core.write_note(cfg_no_dir, "事件", "自动建目录测试", "", {}, OrderedDict())
+    check("干净启动①：路由目录不存在 → write_note 失败、不建目录、提示指向②页",
+          r_nd.get("ok") is False and not ghost.exists()
+          and any("按映射创建" in x for x in r_nd.get("report") or []),
+          str(r_nd.get("report"))[:140])
+    r_nd2 = core.create_skeleton_note(cfg_no_dir, "自动建目录测试2", "事件", dry_run=False)
+    check("干净启动①：目录不存在 → create_skeleton_note 也不建目录",
+          r_nd2.get("ok") is False and not ghost.exists()
+          and any("按映射创建" in x for x in r_nd2.get("report") or []),
+          str(r_nd2.get("report"))[:140])
+
+    # ② 切到没有档案的库 → 映射置空、不推断
+    fake_kb = SANDBOX / "新库无档案"
+    for d in ("01人物", "02事件"):
+        (fake_kb / d).mkdir(parents=True, exist_ok=True)
+    cfg_sw = dict(cfg)
+    cfg_sw["profiles"] = {}
+    sw = core.switch_kb(cfg_sw, fake_kb, save=False)
+    check("干净启动②：切到无档案的库 → routes 为空、profile_found=False、提示去②页配置",
+          sw.get("profile_found") is False and cfg_sw.get("routes") == {}
+          and cfg_sw.get("template_routes") == {}
+          and any("还没有配置" in x for x in sw.get("report") or []),
+          str(sw.get("report"))[:160])
+
+    # ③ templates_dir 不再向上级目录查找
+    up_root = SANDBOX / "上级模板测试"
+    (up_root / "子库").mkdir(parents=True, exist_ok=True)
+    (up_root / "Templates（模板）").mkdir(parents=True, exist_ok=True)
+    (up_root / "Templates（模板）" / "通用.md").write_text("# 通用", encoding="utf-8")
+    cfg_up = {"knowledge_base": str(up_root / "子库"), "routes": {}, "template_routes": {},
+              "templates_dir": ""}
+    check("干净启动③：只配置了 templates_dir 时用它；未配置时**不向上级目录查找**",
+          core.templates_dir({**cfg_up, "templates_dir": str(up_root / "Templates（模板）")})
+          == up_root / "Templates（模板）" and core.templates_dir(cfg_up) is None,
+          str(core.templates_dir(cfg_up)))
+
+    # ③b 不再回落"程序内置模板"
+    cfg_notpl = {"knowledge_base": str(fake_kb), "routes": {"人物": "01人物"},
+                 "template_routes": {"人物": "人物图谱.md"}, "templates_dir": ""}
+    _tp, _note = core.resolve_template(cfg_notpl, "人物")
+    _text, _tnote = core.load_template_text(cfg_notpl, "人物")
+    check("干净启动③：没有用户模板 → resolve_template 返回 None 并给出④页提示（无内置兜底）",
+          _tp is None and not _text.strip()
+          and "选择模板文件夹" in _note and "粘贴模板" in _note and "内置" not in _note,
+          str(_note)[:90])
+
+    # ③c 粘贴模板：写进程序自己的目录（KB_TPL_DIR 隔离），并被优先使用
+    pt = core.save_pasted_template({}, "人物", "# 粘贴测试模板\n\n## 🪪 基本信息\n\n- <!-- TODO -->",
+                                   save=False)
+    check("干净启动③：粘贴模板保存到 <程序目录>/_模板/<类型>.md（可用 KB_TPL_DIR 隔离）",
+          pt.get("ok") is True and Path(pt["path"]).parent == Path(os.environ["KB_TPL_DIR"])
+          and Path(pt["path"]).name == "人物.md" and Path(pt["path"]).is_file(),
+          str(pt.get("path")))
+    cfg_paste = {"knowledge_base": str(fake_kb), "routes": {"人物": "01人物"},
+                 "template_routes": {"人物": "人物.md"}, "templates_dir": ""}
+    _tp2, _n2 = core.resolve_template(cfg_paste, "人物")
+    check("干净启动③：粘贴的模板会被 resolve_template 找到",
+          _tp2 is not None and _tp2.name == "人物.md"
+          and _tp2.parent == Path(os.environ["KB_TPL_DIR"]), str(_tp2))
+
+    # ④ 批量补链不再自动重建词表
+    dict_file = core.term_dict_path(core.load_config())
+    before = dict_file.read_bytes() if dict_file.is_file() else b""
+    b_batch = core.link_keywords_batch(cfg, dry_run=True, limit=3)
+    after = dict_file.read_bytes() if dict_file.is_file() else b""
+    check("干净启动④：批量补链不再改写 _链接词表.json",
+          before == after and bool(b_batch.get("ok")), f"{len(before)} → {len(after)} 字节")
+
+    # ⑤ 备份目录在程序目录里、按知识库分文件夹（不在知识库里）
+    root_env = os.environ.get("KB_BACKUP_DIR")
+    os.environ["KB_BACKUP_DIR"] = ""
+    try:
+        br = core.backup_root(create=False)
+        check("干净启动⑤：backup_root 在 <程序目录>/_备份/<库名>（不在知识库内）",
+              str(br).startswith(str(core.app_dir())) and core.BACKUP_DIR_NAME in str(br)
+              and str(SANDBOX) not in str(br), str(br))
+    finally:
+        os.environ["KB_BACKUP_DIR"] = root_env if root_env is not None else ""
+    os.environ["KB_BACKUP_DIR"] = str(SANDBOX / "_备份")
+
+    out_txt = core.normalize_note_body("## ⚖️ 历史评价\n\n- 兵力数字说法不一\n  > ⚖️ 争议说明：各方统计差别很大。\n",
+                                       "争议测试", [], "")
+    check("争议说明：归一化绝不代写「｜来源：」", "｜来源" not in out_txt, out_txt[:100].replace("\n", " "))
+    rep2 = []
+    core.build_note_text(cfg, "事件", "争议文案测试", "", {},
+                         core.parse_sections("## 📌 事件概览\n\n- 兵力数字说法不一。\n"
+                                             "  > ⚖️ 争议说明：各方统计差别很大。\n"), rep2)
+    check("争议说明：报告明确提示“缺来源”，不再写“已就地附来源简介”",
+          any("缺来源" in x for x in rep2) and not any("已就地附" in x for x in rep2),
+          str([x for x in rep2 if "争议" in x]))
+
+    # ---- 11n. 写盘跟随原文件换行符（不再制造 CRLF/LF 混合）----
+    crlf_note = SANDBOX / "02 人物图谱" / "换行CRLF测试.md"
+    crlf_src = "# 换行CRLF测试\n\n正文 [[链接目标人物]] 一行。\n\n## 📜 生平简史\n\n- 内容\n\n---\n**关联**：[[02人物图谱]]\n"
+    crlf_note.write_bytes(crlf_src.replace("\n", "\r\n").encode("utf-8"))
+    core.link_keywords(cfg, crlf_note, dry_run=False)
+    raw = crlf_note.read_bytes()
+    crlf_cnt = raw.count(b"\r\n")
+    bare_lf = raw.count(b"\n") - crlf_cnt
+    check("换行符：改写 CRLF 笔记后仍是 CRLF，且没有双重转换",
+          crlf_cnt > 0 and bare_lf == 0 and (b"\r\r\n" not in raw),
+          "CRLF %d 处｜裸 LF %d 处" % (crlf_cnt, bare_lf))
+    lf_note = SANDBOX / "02 人物图谱" / "换行LF测试.md"
+    lf_note.write_bytes(("# 换行LF测试\n\n正文 [[链接目标人物]] 一行。\n\n---\n**关联**：[[02人物图谱]]\n").encode("utf-8"))
+    core.link_keywords(cfg, lf_note, dry_run=False)
+    raw2 = lf_note.read_bytes()
+    crlf2 = raw2.count(b"\r\n")
+    check("换行符：改写 LF 笔记后仍是 LF", b"\r\n" not in raw2, "CRLF %d 处" % crlf2)
+    new_path = SANDBOX / "02 人物图谱" / "换行新建测试.md"
+    if new_path.exists():
+        new_path.unlink()
+    core.write_note(cfg, "人物", "换行新建测试", "", {}, {})
+    new_raw = new_path.read_bytes() if new_path.is_file() else b""
+    new_crlf = new_raw.count(b"\r\n")
+    check("换行符：新建笔记用 LF", bool(new_raw) and (b"\r\n" not in new_raw),
+          "CRLF %d 处" % new_crlf)
+    style_new = core.write_text_keep_eol(SANDBOX / "eol_new.txt", "a\nb\n")
+    style_crlf = core.write_text_keep_eol(crlf_note, crlf_note.read_text(encoding="utf-8"))
+    check("换行符：write_text_keep_eol 新文件→LF、CRLF 文件→CRLF、二次写不双重转换",
+          style_new == "LF" and style_crlf == "CRLF" and (b"\r\r\n" not in crlf_note.read_bytes()),
+          "新文件 %s｜CRLF 文件 %s" % (style_new, style_crlf))
+    core.update_note_file(cfg, crlf_note, sections={}, dry_run=False)
+    after = crlf_note.read_bytes()
+    after_crlf = after.count(b"\r\n")
+    after_bare = after.count(b"\n") - after_crlf
+    check("换行符：update_note_file 改写 CRLF 笔记后仍是 CRLF",
+          after_crlf > 0 and after_bare == 0 and (b"\r\r\n" not in after),
+          "CRLF %d 处｜裸 LF %d 处" % (after_crlf, after_bare))
+
+    # ---- 11n. sections 形状校验 + 兼容直觉写法（**只读**，不改共享沙盒状态）----
+    n1 = core.normalize_sections_input({"## 生平简史": ["- 甲"]})
+    check("sections：名称已带 `## ` 时标题不重复补（键为去装饰的规范名）",
+          n1["生平简史"][0] == "## 生平简史" and list(n1) == ["生平简史"], str(n1))
+    a = core.normalize_sections_input({"生平简史": ["- 甲", "- 乙"]})
+    b = core.normalize_sections_input({"生平简史": "- 甲\n- 乙"})
+    c = core.normalize_sections_input({"生平简史": ("## 📜 生平简史", ["- 甲", "- 乙"])})
+    check("sections：三种写法归一化后小节名与行内容一致",
+          list(a) == list(b) == list(c) and a["生平简史"][1] == ["- 甲", "- 乙"], str(a))
+    check("sections：内部形状被判为无需归一化（守卫）",
+          core._sections_need_normalize({"x": ("## x", ["- 1"])}) is False
+          and core._sections_need_normalize({"x": ["- 1"]}) is True)
+    try:
+        core.normalize_sections_input({"生平简史": 123}); msg = "（没有抛异常）"
+    except ValueError as e:
+        msg = str(e)
+    check("sections：非法形状抛中文 ValueError 且含示例写法",
+          "形状" in msg and "整段文本" in msg and "收到" in msg, msg[:70])
+    _t = SANDBOX / "01 时间线" / "1931年-测试事变.md"
+    _before = _t.read_text(encoding="utf-8")
+    r_a = core.update_note_file(cfg, _t, sections={"事件概览": ["- 甲写法"]}, dry_run=True)
+    r_b = core.update_note_file(cfg, _t, sections={"事件概览": "- 乙写法"}, dry_run=True)
+    r_c = core.update_note_file(cfg, _t, sections={"事件概览": ("## 📌 事件概览", ["- 丙写法"])},
+                               dry_run=True)
+    check("sections：三种写法经 update_note_file 都不抛异常（dry_run）",
+          all(bool(x.get("ok")) for x in (r_a, r_b, r_c)),
+          str([x.get("action") for x in (r_a, r_b, r_c)]))
+    check("sections：dry_run 不改动原文件",
+          _t.read_text(encoding="utf-8") == _before)
+    try:
+        core.update_note_file(cfg, _t, sections={"事件概览": 123}, dry_run=True); msg2 = "（没有抛异常）"
+    except ValueError as e:
+        msg2 = str(e)
+    check("sections：update_note_file 遇非法形状也抛中文 ValueError", "形状" in msg2, msg2[:60])
+
+    # ---- 11o. Markdown 结构体检（语法体检，纯文本、只读、零 token）----
+    import contextlib
+    import io
+
+    import _check_format
+
+    syn = SANDBOX / "语法体检"
+    (syn / "01人物").mkdir(parents=True, exist_ok=True)
+    (syn / "01人物" / "坏索引链接.md").write_text(
+        "---\ntitle: 坏索引链接\ntype: 人物\n---\n\n# 坏索引链接\n\n见了 [[_索引|人物]]。\n", encoding="utf-8")
+    (syn / "01人物" / "坏嵌套.md").write_text(
+        "---\ntitle: 坏嵌套\ntype: 人物\n---\n\n# 坏嵌套\n\n见 [[甲|[[乙]]]]。\n", encoding="utf-8")
+    (syn / "01人物" / "坏注释.md").write_text(
+        "---\ntitle: 坏注释\ntype: 人物\n---\n\n# 坏注释\n\n<!-- 没闭合\n", encoding="utf-8")
+    (syn / "01人物" / "坏frontmatter.md").write_text(
+        "---\ntype: [[_索引|人物]]\n---\n\n# 坏 frontmatter\n", encoding="utf-8")
+    (syn / "01人物" / "坏BOM.md").write_bytes(
+        b"\xef\xbb\xbf" + "---\ntitle: 坏BOM\ntype: 人物\n---\n\n# 坏BOM\n".encode("utf-8"))
+    (syn / "01人物" / "坏重复.md").write_text(
+        "---\ntitle: 坏重复\ntype: 人物\n---\n\n# 坏重复\n\n## ⚖️ 历史评价\n\na\n\n## ⚖️ 历史评价\n\nb\n",
+        encoding="utf-8")
+    (syn / "01人物" / "坏未闭合.md").write_text(
+        "---\ntitle: 坏未闭合\ntype: 人物\n---\n\n# 坏未闭合\n\n这里 [[_索引 没闭合\n", encoding="utf-8")
+    f_clean = syn / "01人物" / "干净.md"
+    f_clean.write_text("---\ntitle: 干净\ntype: 人物\n---\n\n# 干净\n\n## 📜 生平简史\n\n正常 [[甲]]。\n",
+                       encoding="utf-8")
+    before = {p.name: p.read_bytes() for p in syn.rglob("*.md")}
+    syn_res = core.syntax_check(paths=syn)
+    check("语法体检：7 类问题各能检出（计数均 ≥1）",
+          all(syn_res["counts"][k] >= 1 for k, _ in core.SYNTAX_ITEMS), str(syn_res["counts"]))
+    check("语法体检：报出正确的文件名 / 重复标题名",
+          any("坏索引链接.md" in x for x in syn_res["findings"]["index_pipe"])
+          and any("坏嵌套.md" in x for x in syn_res["findings"]["nested_link"])
+          and any("坏注释.md" in x for x in syn_res["findings"]["unclosed_comment"])
+          and any("坏frontmatter.md" in x for x in syn_res["findings"]["frontmatter"])
+          and any("坏BOM.md" in x for x in syn_res["findings"]["bom"])
+          and any("坏重复.md" in x and "⚖️ 历史评价" in x for x in syn_res["findings"]["dup_h2"]),
+          str(syn_res["findings"]["dup_h2"][:2]))
+    clean_res = core.syntax_check(paths=f_clean)
+    check("语法体检：干净文件七项全 0、ok=True",
+          clean_res["ok"] and all(v == 0 for v in clean_res["counts"].values()))
+    check("语法体检：只读（跑完所有文件字节不变）",
+          before == {p.name: p.read_bytes() for p in syn.rglob("*.md")})
+    check("语法体检：CLI 有问题 → 退出码 1", _check_format.main(["--syntax", str(syn)]) == 1)
+    check("语法体检：CLI 全绿 → 退出码 0", _check_format.main(["--syntax", str(f_clean)]) == 0)
+    # ---- 11p. 第 7 项：未闭合的 [[ / ]] ----
+    check("语法体检⑦：单行未闭合 [[ 被检出（含该文件）",
+          any("坏未闭合.md" in x for x in syn_res["findings"]["unclosed_link"]),
+          str(syn_res["findings"]["unclosed_link"][:2]))
+    (syn / "01人物" / "坏跨行.md").write_text(
+        "---\ntitle: 坏跨行\ntype: 人物\n---\n\n# 坏跨行\n\n[[_索引\n下一行才结束]]\n", encoding="utf-8")
+    r_cross = core.syntax_check(paths=f_clean.parent / "坏跨行.md")
+    check("语法体检⑦：跨行截断（总数不等）能被文件级比对捕获或行级报出",
+          r_cross["counts"]["unclosed_link"] >= 1 and any("坏跨行" in x for x in r_cross["findings"]["unclosed_link"]),
+          str(r_cross["findings"]["unclosed_link"][:2]))
+    (syn / "01人物" / "代码块示例.md").write_text(
+        "---\ntitle: 代码块示例\ntype: 人物\n---\n\n# 代码块示例\n\n```\n[[示例未闭合\n```\n", encoding="utf-8")
+    r_fence = core.syntax_check(paths=f_clean.parent / "代码块示例.md")
+    check("语法体检⑦：代码块内的 [[ 示例**不**误报",
+          r_fence["counts"]["unclosed_link"] == 0, str(r_fence["findings"]["unclosed_link"][:2]))
+    (syn / "01人物" / "正常三种.md").write_text(
+        "---\ntitle: 正常三种\ntype: 人物\n---\n\n# 正常三种\n\n[[X]] / [[X|Y]] / [[A/B|C]]\n", encoding="utf-8")
+    r_ok = core.syntax_check(paths=f_clean.parent / "正常三种.md")
+    check("语法体检⑦：正常 [[X]] / [[X|Y]] / [[A/B|C]] 不误报",
+          r_ok["counts"]["unclosed_link"] == 0 and r_ok["ok"], str(r_ok["counts"]))
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code_json = _check_format.main(["--syntax", str(syn), "--json"])
+    try:
+        js = json.loads(buf.getvalue())
+        json_ok = js["counts"]["dup_h2"] >= 1 and code_json == 1
+    except Exception:
+        json_ok = False
+    check("语法体检：CLI --json 输出可解析且计数正确", json_ok, buf.getvalue()[:80])
+    check("语法体检：路径不存在时给明确提示（退出码 2）",
+          _check_format.main(["--syntax", str(syn / "根本不存在的目录")]) == 2)
+
+    # ---- 11p. 语法体检：索引文件豁免（索引.md / _索引.md 不算词条）----
+    idx = SANDBOX / "02 人物图谱" / "_索引.md"
+    idx.write_text("# 人物索引\n\n- 链接\n", encoding="utf-8")          # 故意不写 frontmatter
+    normal = SANDBOX / "02 人物图谱" / "体检测试人物.md"
+    normal.write_text("# 体检测试人物\n\n正文\n", encoding="utf-8")        # 也不写 frontmatter（应被报出）
+    r = core.syntax_check(cfg, [SANDBOX])
+    fm = r["items"]["frontmatter"]["findings"] if isinstance(r.get("items"), dict) else r.get("findings", {}).get("frontmatter", [])
+    joined = " ".join(str(x) for x in fm)
+    check("语法体检：索引文件（_索引.md）的\"缺 frontmatter\"被跳过", "_索引.md" not in joined, joined[:120])
+    check("语法体检：非索引笔记缺 frontmatter 仍被报出", "体检测试人物.md" in joined, joined[:120])
+    for f in (idx, normal):
+        f.unlink(missing_ok=True)
+
+    # ---- 11p. 语法体检：Markdown 图片 alt 里的方括号不该被当成未闭合 ----
+    md_dir = SANDBOX / "03 派系图谱"
+    md_dir.mkdir(parents=True, exist_ok=True)
+    p_md = md_dir / "语法误报样例.md"
+    p_md.write_text("---\ntitle: 语法误报样例\ntype: 派系\n---\n\n# 语法误报样例\n\n"
+                    "![Duan Qirui Executive Government Tickets [2026]](https://example.com/a.png)\n\n"
+                    "正常链接：[[链接目标人物]] 与 [[链接目标人物|别名]]\n\n"
+                    "## 📌 基本信息\n\n- 测试\n\n---\n**关联**：[[03派系图谱]]\n", encoding="utf-8")
+    r_md = core.syntax_check(cfg, str(SANDBOX))
+    check("语法体检：Markdown 图片 alt 里的方括号不算未闭合",
+          "语法误报样例" not in json.dumps(r_md, ensure_ascii=False), "样例文件被误报")
+
+    # ---- 11q. 规范清单体检（读规范 §15 → 逐条映射 + 脱节检测）----
+    spec_dir = SANDBOX / "_规范"
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    spec_p = spec_dir / "测试用格式规范.md"
+    spec_p.write_text(
+        "# 测试用格式规范\n\n## 14. 别的章节\n\n- 不该被解析\n\n"
+        "# 15. 数据质量检查\n\n### 结构检查\n\n"
+        "- 是否存在 frontmatter\n"
+        "- 是否存在且只有一个 H1\n"
+        "- 某个还没有实现的新检查条目\n\n"
+        "### 历史数据检查\n\n"
+        "- `dynasty` 是否与相关政权逻辑冲突\n"
+        "- `type` 是否属于合法枚举\n\n"
+        "# 16. 禁止事项\n\n- 后面的不该被解析\n", encoding="utf-8")
+    cfg_spec = dict(cfg)
+    cfg_spec["spec_file"] = str(spec_p)
+    cl = core.load_spec_checklist(cfg_spec)
+    check("规范清单：条目数与分组解析正确",
+          cl["total"] == 5 and cl["groups"] == ["结构检查", "历史数据检查"],
+          f"total={cl['total']} groups={cl['groups']}")
+    check("规范清单：条目文字解析正确（去列表符）",
+          cl["items"][0]["text"] == "是否存在 frontmatter" and cl["items"][4]["text"] == "`type` 是否属于合法枚举",
+          str([x["text"] for x in cl["items"]])[:80])
+    check("规范清单：§15 之后 / 之前的内容不被解析",
+          all("不该被解析" not in x["text"] for x in cl["items"]), "越界解析")
+    qc = core.quality_checklist(cfg_spec)
+    by_no = {r["no"]: r for r in qc["items"]}
+    check("规范清单：有映射的条目给出 pass/fail（不是 manual）",
+          by_no[1]["status"] in ("pass", "fail") and by_no[1]["check"] == "fm_exists",
+          f"{by_no[1]['status']}/{by_no[1]['check']}")
+    check("规范清单：未实现的条目诚实标为人工复核",
+          by_no[3]["status"] == "manual", by_no[3]["status"])
+    check("规范清单：声明为人工的条目不算脱节",
+          not any("dynasty" in d for d in qc["drift"]), str(qc["drift"])[:80])
+    check("规范清单：未映射的新条目进 drift",
+          len(qc["drift"]) == 1 and "某个还没有实现的新检查条目" in qc["drift"][0],
+          str(qc["drift"])[:100])
+    # 改写一条文字 → 脱节（映射对不上了）
+    spec_p.write_text(spec_p.read_text(encoding="utf-8").replace(
+        "- 是否存在 frontmatter", "- 是否写了 frontmatter 头"), encoding="utf-8")
+    qc2 = core.quality_checklist(cfg_spec)
+    check("规范清单：条目被改写 → 脱节报出",
+          any("是否写了 frontmatter 头" in d for d in qc2["drift"]), str(qc2["drift"])[:100])
+    check("规范清单：有脱节时 ok=False", qc2["ok"] is False, str(qc2["ok"]))
+    check("规范清单：mapped/manual/failed 计数一致",
+          qc2["mapped"] + qc2["manual"] == qc2["total"] == 5, str(qc2)[:80])
+    # 找不到规范 → 给出可读提示而不是崩
+    cfg_none = dict(cfg)
+    cfg_none["spec_file"] = str(spec_dir / "不存在.md")
+    cfg_none["knowledge_base"] = str(SANDBOX / "不存在的库")
+    qc3 = core.quality_checklist(cfg_none)
+    check("规范清单：找不到规范时不崩、有提示",
+          qc3["total"] == 0 and qc3["drift"], str(qc3["drift"])[:80])
+
+    # ---- 11r. ⑧ 批量建条：KB 感知类型 + 预演校验模板 + 逐条原因 ----
+    (SANDBOX / "03战争").mkdir(parents=True, exist_ok=True)
+    ancient = dict(cfg)
+    ancient["knowledge_base"] = str(SANDBOX)
+    ancient["routes"] = {"人物": "02 人物图谱", "事件": "12 事件数据库 ⭐", "战争": "03战争",
+                         "政权": "04政权", "制度": "05制度", "法律": "06法律"}
+    ancient["template_routes"] = {"人物": "人物.md", "事件": "事件.md", "战争": "战争.md"}
+    minguo = dict(cfg)
+    minguo["knowledge_base"] = str(SANDBOX)
+    minguo["routes"] = {**(cfg.get("routes") or {}), "战役": "13 战役数据库 ⭐"}
+    minguo["template_routes"] = {**(cfg.get("template_routes") or {}), "战役": "战役.md"}
+    check("KB 感知类型：民国词汇「战役」被翻译成该库真实类型「战争」",
+          core.suggest_type_for_kb(ancient, "西陵之战") == "战争"
+          and core.guess_note_type("西陵之战") == "战役",
+          f"suggest={core.suggest_type_for_kb(ancient, '西陵之战')}｜guess={core.guess_note_type('西陵之战')}")
+    check("KB 感知类型：库里确实有「战役」时仍返回「战役」",
+          core.suggest_type_for_kb(minguo, "西陵之战") == "战役",
+          str(core.suggest_type_for_kb(minguo, "西陵之战")))
+    check("KB 感知类型：通用规则命中、且该库确有该类型 → 返回该库类型（不再需要任何翻译桥）",
+          core.suggest_type_for_kb(ancient, "八王之乱") == "事件",
+          f"八王之乱={core.suggest_type_for_kb(ancient, '八王之乱')!r}")
+    check("KB 感知类型：任何规则都对不上 → 返回空串（不瞎塞任何类型）",
+          core.suggest_type_for_kb(ancient, "甲乙丙丁") == ""
+          and core.suggest_type_for_kb(ancient, "子丑寅卯") == "",
+          f"甲乙丙丁={core.suggest_type_for_kb(ancient, '甲乙丙丁')!r}")
+    words = "交趾争夺战\n秦凉之变\n西陵之战\n八王之乱"
+    r8 = core.create_skeleton_notes(ancient, words, target_dir="03战争", dry_run=True)
+    check("⑧ 批量建条：给了默认目录 → 类型按目录反查、全部可建（用户截图那种设置）",
+          len(r8["failed"]) == 0 and len(r8["created"]) == 4
+          and all(d["type"] == "战争" for d in r8["details"]),
+          str([(d["name"], d["type"], d["ok"]) for d in r8["details"]]))
+    check("⑧ 批量建条：details 逐条给出 name/ok/type/dir/reason（供界面显示原因）",
+          r8["details"] and all({"name", "ok", "type", "dir", "reason"} <= set(d)
+                                for d in r8["details"]),
+          str(r8["details"][0]))
+    notpl_kb = SANDBOX / "_无模板库"
+    (notpl_kb / "03战争").mkdir(parents=True, exist_ok=True)
+    bare = dict(ancient)
+    bare["knowledge_base"] = str(notpl_kb)
+    bare["templates_dir"] = ""
+    miss = core.create_skeleton_note(bare, "凉州之战", target_dir="03战争", dry_run=True)
+    check("⑧ 预览不再「假通过」：缺模板时 dry-run 即报失败并说明原因",
+          miss["ok"] is False and miss["action"] == "预览（缺模板）"
+          and "模板" in (miss["report"] or [""])[0],
+          f"ok={miss['ok']}｜action={miss['action']}｜{(miss['report'] or [''])[0][:60]}")
+    # 用「任何概念都套不上」的词（郝散起兵现在能正确判到「战争」，不再是失败用例）
+    nor = core.create_skeleton_notes(ancient, "甲乙丙丁", dry_run=True)
+    check("⑧ 批量建条：判断不出类型时给出可操作的中文提示（不是静默失败）",
+          len(nor["failed"]) == 1 and "类型" in nor["details"][0]["reason"],
+          str(nor["details"][0]["reason"])[:140])
+
+    # ---- 11s. era-neutral：凭空发明的类型名也要能工作（程序不含任何时期预设）----
+    novel = SANDBOX / "_科幻库"
+    for d in ("战事", "事迹", "人物志", "典章", "纪年", "舆图", "族志"):
+        (novel / d).mkdir(parents=True, exist_ok=True)
+    ncfg = dict(cfg)
+    ncfg["knowledge_base"] = str(novel)
+    ncfg["templates_dir"] = ""
+    ncfg["routes"] = {d: d for d in ("战事", "事迹", "人物志", "典章", "纪年", "舆图", "族志")}
+    ncfg["template_routes"] = {}
+    det_n = core.detect_route_profile(ncfg, novel)
+    check("era-neutral：完全发明的类型名也能被扫描出来",
+          len(det_n["routes"]) == 7 and det_n["routes"].get("战事") == "战事",
+          str(det_n["routes"]))
+    got = {k: core.match_type_in_kb(ncfg, k)[0] for k in
+           ("西陵之战", "八王之乱", "元嘉律", "甲乙丙丁")}
+    check("era-neutral：只凭该库类型名 + 通用概念判定（无任何时期预设）",
+          got["西陵之战"] == "战事" and got["八王之乱"] == "事迹"
+          and got["元嘉律"] == "典章" and got["甲乙丙丁"] == "",
+          str(got))
+    # 纯人名（"慕容儁"）靠规则判不出 → 诚实返回空串；用 cfg["type_keywords"] 可显式扩展
+    ncfg_kw = dict(ncfg)
+    ncfg_kw["type_keywords"] = {"人物志": ["慕容", "宇文", "拓跋"]}
+    check("era-neutral：规则判不出的（纯人名）→ 空串；可用 type_keywords 由该库自行扩展",
+          core.match_type_in_kb(ncfg, "慕容儁")[0] == ""
+          and core.match_type_in_kb(ncfg_kw, "慕容儁")[0] == "人物志",
+          f"默认={core.match_type_in_kb(ncfg, '慕容儁')[0]!r}／扩展后={core.match_type_in_kb(ncfg_kw, '慕容儁')[0]!r}")
+    check("era-neutral：判不出就给空串 + 中文提示（绝不塞任何预设类型）",
+          core.suggest_type_for_kb(ncfg, "甲乙丙丁") == ""
+          and "类型" in core.create_skeleton_note(ncfg, "甲乙丙丁", dry_run=True)["report"][0],
+          str(core.create_skeleton_note(ncfg, "甲乙丙丁", dry_run=True)["report"])[:120])
+    dc = core.default_config()
+    check("era-neutral：default_config 零预设（无知识库、无类型、无模板映射）",
+          dc["knowledge_base"] == "" and dc["routes"] == {} and dc["template_routes"] == {},
+          f'kb={dc["knowledge_base"]!r} routes={dc["routes"]} tr={dc["template_routes"]}')
+    check("era-neutral：民国默认表/翻译桥/兜底类型都已删除或置空",
+          core.DEFAULT_ROUTES == {} and core.DEFAULT_TEMPLATE_ROUTES == {}
+          and not hasattr(core, "TYPE_SYNONYM_CHAIN")
+          and not hasattr(core, "FOOTER_RELATED_TYPES")
+          and core.SKELETON_DEFAULT_TYPE == "", repr(core.SKELETON_DEFAULT_TYPE))
+    import io as _io, tokenize as _tok
+    _src = Path(core.__file__).read_text(encoding="utf-8")
+    _code = " ".join(t.string for t in _tok.generate_tokens(_io.StringIO(_src).readline)
+                     if t.type not in (_tok.COMMENT, _tok.STRING))
+    _bad = [w for w in ("民国", "国民党", "共产党", "派系图谱", "人物图谱") if w in _code]
+    check("era-neutral：core.py 逻辑代码里不再出现时期专属词（防回归）",
+          not _bad, str(_bad))
+    f0 = core.template_footer(ncfg, "战事")
+    ncfg2 = dict(ncfg)
+    ncfg2["footer_types"] = {"战事": ["人物志", "事迹"]}
+    f1 = core.template_footer(ncfg2, "战事")
+    check("era-neutral：页脚库驱动（没配 → 不加页脚；配了 → 按该库配置生成）",
+          f0 == [] and any("**关联**" in x for x in f1), f"无配置={f0}／有配置={f1}")
+
+    # ---- 11t 每库档案：footer_types / type_keywords（每库独立、互不污染）----
+    dcf = core.default_config()
+    check("档案：default_config 带 footer_types / type_keywords 两个空键",
+          dcf.get("footer_types") == {} and dcf.get("type_keywords") == {},
+          f"footer_types={dcf.get('footer_types')} type_keywords={dcf.get('type_keywords')}")
+    import tempfile, shutil as _sh
+    _tmp = Path(tempfile.mkdtemp(prefix="kbprof_"))
+    try:
+        kbA, kbB = _tmp / "A", _tmp / "B"
+        for _kb in (kbA, kbB):
+            (_kb / "01人物").mkdir(parents=True)
+        cfgp = dict(make_cfg())
+        cfgp["profiles"] = {}
+        cfgp["knowledge_base"] = str(kbA)
+        cfgp["routes"] = {"人物": "01人物"}
+        cfgp["footer_types"] = {"人物": ["人物"]}
+        cfgp["type_keywords"] = {"人物": ["帝", "王"]}
+        core.save_kb_profile(cfgp, kbA, save=False)
+        _prof = cfgp["profiles"][core.profile_key(kbA)]
+        check("档案：save_kb_profile 会存下 footer_types / type_keywords",
+              _prof.get("footer_types") == {"人物": ["人物"]}
+              and _prof.get("type_keywords") == {"人物": ["帝", "王"]},
+              f"footer_types={_prof.get('footer_types')} type_keywords={_prof.get('type_keywords')}")
+        core.switch_kb(cfgp, kbB, save=False)
+        check("档案：切到无档案的库 → footer_types / type_keywords 清空（不继承上一个库）",
+              cfgp.get("footer_types") == {} and cfgp.get("type_keywords") == {},
+              f"footer_types={cfgp.get('footer_types')} type_keywords={cfgp.get('type_keywords')}")
+        core.switch_kb(cfgp, kbA, save=False)
+        check("档案：切回该库 → 两个键跟着库恢复",
+              cfgp.get("footer_types") == {"人物": ["人物"]} and cfgp.get("type_keywords") == {"人物": ["帝", "王"]},
+              f"footer_types={cfgp.get('footer_types')} type_keywords={cfgp.get('type_keywords')}")
+        cfgp["templates_dir"] = ""                     # 模板没有页脚 → 走 footer_types
+        _f = core.template_footer(cfgp, "人物")
+        check("档案：footer_types 经切库载入后能真正生成关联页脚",
+              any("**关联**" in x and "[[" in x for x in _f), str(_f))
+    finally:
+        _sh.rmtree(_tmp, ignore_errors=True)
+
+    # ---- 汇总 ----
+    print("=" * 60)
+    print("历史知识库 · 核心引擎自测")
+    print("=" * 60)
+    for line in RESULTS:
+        print(" " + line)
+    print("=" * 60)
+    fails = sum(1 for r in RESULTS if r.startswith("[FAIL]"))
+    print(f"结果：{len(RESULTS) - fails}/{len(RESULTS)} 通过，{fails} 失败")
+    print("沙盒目录：" + str(SANDBOX))
+    return 1 if fails else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

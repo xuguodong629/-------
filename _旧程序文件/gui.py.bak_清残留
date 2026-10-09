@@ -1,0 +1,4197 @@
+# -*- coding: utf-8 -*-
+"""
+gui.py —— 民国历史知识库 · 桌面端界面（Tkinter，零第三方依赖）
+
+六个标签页：
+  1. 知识库设置：选择知识库目录 → 自动保存配置 + 自动扫描实际目录（目录注册表）→ 测试目录
+  2. 类型映射：   实体类型 → 目标目录 / 模板文件，单元格可直接编辑、改完自动落盘
+  3. AI 工作台：  以**新增词条**为主线：AI 分析与抽取 → 预览 → 写入 → 补齐双链
+                  （填了词条名就能直接分析，检索不再是必经步骤；它降级为可选辅助按钮
+                    「🔍 检索知识库（可选）」，并会在关键词停下 600ms 后自动跑一次做查重/备料，
+                    结果写进「知识库参考（可选）」面板，同时判断是同名增量更新还是新建）
+                  （主线按顺序解锁；另有一键分析并预览 检索→分析→预览）
+                  +「🖼 配图」：本地图库优先，其次中文维基百科（联网只在点按钮时发生）
+  4. 模板管理：   初始化/查看/打开 Templates（模板）目录中的 .md 模板
+  5. 索引与统计： 重建各目录索引与总索引；统计知识库规模
+  6. 手动生成笔记：手写正文 →（可 🖼 配图）→ 预览 → 写入
+
+交互约定：
+  * 任何配置改动都会立刻写盘，状态栏给出「已保存 · …」提示（按钮只是兼容入口）；
+  * 长任务期间自动禁用触发它的按钮，结束后恢复；
+  * 失败详情写进日志区（可选中复制），不只用弹窗；
+  * 「写入时自动带本地配图」默认勾选：勾选只影响**本地图库**，联网取图一律由用户点「🖼 配图」触发；
+    检索结果里带配图的命中会显示 `🖼 文件名`（多张为 `🖼×N`），双击可看片段 + 图片完整路径，并可「打开图片」；
+  * 上次选中的标签页与窗口大小记在 core.BASE_DIR / "ui_state.json"。
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import queue
+import re
+import threading
+import tkinter as tk
+import tkinter.font as tkfont
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
+
+import core
+import templates as tmpl_mod
+from ai_client import AIError, AIClient
+
+
+# ③ AI 工作台的主线是「新增词条」：分析 → 预览 → 写入 → 补齐双链。
+# 「检索知识库」不是必经步骤（新词条必然检索不到），只作为可选的查重/上下文来源：
+# 它不出现在 STEP_DEFS 里，也不参与解锁与打勾，并且关键词一变会自动在后台跑一次。
+STEP_DEFS = (
+    ("analyze", "1. AI 分析与抽取"),
+    ("preview", "2. 预览笔记"),
+    ("write", "3. 写入知识库"),
+    ("backlinks", "4. 补齐双链"),
+)
+
+STEP_HINTS = {
+    "analyze": "下一步：点击「1. AI 分析与抽取」（不确定类型就保持「（由 AI 判定）」）",
+    "preview": "下一步：点击「2. 预览笔记」",
+    "write": "下一步：点击「3. 写入知识库」",
+    "backlinks": "下一步：点击「4. 补齐双链」",
+}
+
+MANUAL_HINT = "也可以点「手动模式」：自己填类型 + 标题，然后直接「2. 预览笔记」"
+SEARCH_BTN_TEXT = "🔍 检索知识库（可选）"
+SEARCH_PANEL_TITLE = "知识库参考（可选：查重 / 给 AI 当上下文）"
+SEARCH_HINT_TEXT = "（回车 = 一键分析并预览）"
+AUTO_SEARCH_DELAY_MS = 600          # 关键词停下 600ms 才自动检索一次
+UI_STATE_NAME = "ui_state.json"          # 相对 core.BASE_DIR
+
+
+class App:
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        self.cfg = core.load_config()
+        self.status_var = tk.StringVar(value="就绪")
+        self.ai = {}          # AI 分析结果缓存
+        self.hits = []        # 检索命中缓存
+        self.kb_rows = []     # 目录注册表缓存
+        self._last_new_title = ""
+        self._last_write_path = ""
+        self._images = []            # ③ 页已配图（core.acquire_image 的结果，[] = 让程序自动带本地图）
+        self._man_images = []        # ⑥ 页已配图
+        self._man_previewed = False  # ⑥ 页是否已生成过预览（配图后决定是否刷新预览）
+        self._last_hit_image = ""    # 最近展开的命中项图片完整路径（供「打开图片」）
+        self._search_job = None      # 自动检索的防抖 job id
+        self._hits_kw = ""           # self.hits 对应的关键词（避免复用过期结果）
+        self._last_hit_key = None    # 上次的 (条数, 有无同名)：只在变化时补日志，避免刷屏
+        self._same_title_hit = None  # 与关键词同名的命中项（决定 exists 与「打开该词条」）
+        self._busy = False
+        self._suppress_invalidate = False
+        self._ui_save_job = None
+
+        # 步骤机状态：只记录“做完了没有”，可用性由 _refresh_steps 推导
+        self.step_done = {k: False for k, _ in STEP_DEFS}
+        self._step_buttons = {}
+        self.step_hint_var = tk.StringVar(value="")
+
+        root.title("民国历史知识库 · V1.0（配置驱动）")
+        self._apply_geometry()
+        icon = core.resource_path("app.ico")
+        if icon.exists():
+            try:
+                root.iconbitmap(default=str(icon))
+            except Exception:
+                pass
+        try:
+            default_font = tkfont.nametofont("TkDefaultFont")
+            default_font.configure(family="Microsoft YaHei UI", size=10)
+        except Exception:
+            pass
+        self._style_notebook()
+
+        self._build_notebook()
+        self._build_statusbar()
+        self._select_initial_tab()
+        self._bind_state_traces()
+        try:
+            root.protocol("WM_DELETE_WINDOW", self._on_close)
+        except Exception:
+            pass
+
+        # ① 页输入框回显当前配置（否则明明配好了却显示空白）
+        self.kb_var.set(self.cfg.get("knowledge_base") or "")
+
+        self.refresh_all()
+        self._task_queue = queue.Queue()          # worker 线程只往这里放结果
+        self.root.after(50, self._poll_tasks)     # 主线程常驻轮询（50ms，代价极小）
+        if not core.resolve_kb(self.cfg):
+            self.set_status("提示：请先在「知识库设置」中选择知识库目录（例如 …\\历史\\19民国）")
+
+    # ------------------------------------------------------------------
+    # 通用辅助
+    # ------------------------------------------------------------------
+
+    def set_status(self, msg: str, err: bool = False):
+        self.status_var.set(("⚠ " if err else "") + msg)
+
+    def log(self, text_widget: tk.Text, msg: str, tag: str = "info"):
+        """写日志，并自动滚动到底部（新内容永远可见）。"""
+        text_widget.configure(state="normal")
+        text_widget.insert("end", msg + "\n", (tag,))
+        self._scroll_to_end(text_widget)
+        text_widget.configure(state="disabled")
+
+    @staticmethod
+    def _scroll_to_end(text_widget: tk.Text):
+        """see("end") 在控件尚未完成布局时可能停在倒数第二行，这里再钉一次底部。"""
+        try:
+            text_widget.see("end")
+            text_widget.yview_moveto(1.0)
+        except Exception:
+            pass
+
+    def logi(self, w, msg, tag="info"):
+        """旧名兼容。"""
+        self.log(w, msg, tag)
+
+    def clear_log(self, text_widget: tk.Text, silent: bool = False):
+        text_widget.configure(state="normal")
+        text_widget.delete("1.0", "end")
+        text_widget.configure(state="disabled")
+        if not silent:
+            self.set_status("日志区已清空")
+
+    def copy_log(self, text_widget: tk.Text):
+        try:
+            text = text_widget.get("1.0", "end-1c")
+        except Exception:
+            text = ""
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+        except Exception as e:  # noqa: BLE001
+            self.set_status(f"复制失败：{type(e).__name__}: {e}", err=True)
+            return
+        self.set_status(f"已复制日志到剪贴板（{len(text)} 字符）")
+
+    def _default_log(self) -> tk.Text:
+        for name in ("work_log", "index_log", "man_log"):
+            w = getattr(self, name, None)
+            if isinstance(w, tk.Text):
+                return w
+        return self.work_log
+
+    def _set_enabled(self, widgets, enabled: bool):
+        for w in widgets or ():
+            if w is None:
+                continue
+            try:
+                w.configure(state=("normal" if enabled else "disabled"))
+            except Exception:
+                pass
+
+    def run_task(self, fn, on_done, desc: str = "任务", busy=()):
+        """后台线程执行 fn，完成后**由主线程**回调 on_done(result)。
+
+        线程安全要点：worker 线程**只把结果放进队列**，绝不碰 Tk——
+        子线程里调 `root.after` 可能抛 `main thread is not in main loop`，
+        一旦抛错结果就永远回不来、界面会一直停在"运行中…"。
+        主线程的 `_poll_tasks`（50ms 一次）取走结果并回调。
+        busy 里传入触发本次任务的控件：运行期间禁用，结束后一律恢复。
+        """
+        widgets = [w for w in (busy or ()) if w is not None]
+        self._busy = True
+        self._set_enabled(widgets, False)
+        self._refresh_steps()
+        self.set_status(f"{desc}运行中…")
+
+        job = {"on_done": on_done, "widgets": widgets, "result": None}
+
+        def worker():
+            r = ("ERROR", "任务异常结束（worker 没有返回结果）")
+            try:
+                r = fn()
+            except Exception as e:  # noqa: BLE001 —— 后台异常也要带回主线程显示
+                r = ("ERROR", f"{type(e).__name__}: {e}")
+            finally:
+                job["result"] = r
+                self._task_queue.put(job)         # 只碰队列，不碰 Tk
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _poll_tasks(self):
+        """主线程轮询：取走后台任务结果并回调（队列空则等下一次）。"""
+        while True:
+            try:
+                job = self._task_queue.get_nowait()
+            except queue.Empty:
+                break
+            self._finish_task(job)
+        try:
+            self.root.after(50, self._poll_tasks)
+        except Exception:                          # 窗口已销毁：停止轮询
+            pass
+
+    def _finish_task(self, job: dict):
+        """在主线程里收尾：恢复控件 → 回调。"""
+        self._busy = False
+        self._set_enabled(job.get("widgets"), True)
+        try:
+            self._refresh_steps()
+        except Exception:
+            pass
+        on_done = job.get("on_done")
+        if on_done is None:
+            return
+        try:
+            on_done(job.get("result"))
+        except Exception as e:  # noqa: BLE001 —— 界面回调出错也不能炸掉主循环
+            self.log(self._default_log(), f"✗ 界面回调异常：{type(e).__name__}: {e}", "err")
+            self.set_status(f"界面回调异常：{type(e).__name__}: {e}", err=True)
+
+    def _on_result(self, log_widget: tk.Text, r, err_prefix: str = ""):
+        """通用结果处理：ERROR 写进日志区（详情可复制），返回 None 表示失败。"""
+        if isinstance(r, tuple) and r and r[0] == "ERROR":
+            detail = f"{err_prefix}{r[1]}"
+            self.log(log_widget, f"✗ 失败：{detail}", "err")
+            self.log(log_widget, "   （上方文字可直接选中复制；修好后重试刚才那一步即可）", "info")
+            self.set_status(f"失败：{detail[:120]}（详情见日志区，可复制）", err=True)
+            return None
+        return r
+
+    def _persist(self, msg: str) -> bool:
+        """立即把 cfg 写盘，并在状态栏报「已保存」。"""
+        try:
+            core.save_config(self.cfg)
+        except Exception as e:  # noqa: BLE001
+            self.set_status(f"保存失败：{type(e).__name__}: {e}", err=True)
+            return False
+        self.set_status(f"已保存 · {msg}")
+        return True
+
+    @staticmethod
+    def _open_dir(path) -> bool:
+        """在文件管理器里打开目录；跨平台失败静默（不弹窗）。"""
+        if not path:
+            return False
+        try:
+            if hasattr(os, "startfile"):
+                os.startfile(str(path))          # noqa: S606 —— Windows
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(path)])
+            else:
+                subprocess.Popen(["xdg-open", str(path)])
+            return True
+        except Exception:
+            return False
+
+    # ------------------------------------------------------------------
+    # 窗口尺寸 / 标签页记忆
+    # ------------------------------------------------------------------
+
+    def _ui_state_path(self):
+        return core.BASE_DIR / UI_STATE_NAME
+
+    def _load_ui_state(self) -> dict:
+        try:
+            p = self._ui_state_path()
+            if p.exists():
+                data = json.loads(p.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return data
+        except Exception:
+            pass
+        return {}
+
+    def _apply_geometry(self):
+        """默认尺寸按屏幕算：小屏也放得下，关键按钮不会被挤出可视区。"""
+        try:
+            sw = self.root.winfo_screenwidth()
+            sh = self.root.winfo_screenheight()
+        except Exception:
+            sw, sh = 1280, 800
+        dw = max(960, min(1280, sw - 120))
+        dh = max(620, min(840, sh - 140))
+        st = self._load_ui_state()
+        try:
+            w = int(st.get("width") or dw)
+            h = int(st.get("height") or dh)
+        except Exception:
+            w, h = dw, dh
+        w = max(880, min(w, sw))
+        h = max(560, min(h, sh))
+        x = st.get("x")
+        y = st.get("y")
+        placed = False
+        if isinstance(x, int) and isinstance(y, int) and -20 <= x <= max(0, sw - 300) and -20 <= y <= max(0, sh - 200):
+            self.root.geometry(f"{w}x{h}+{x}+{y}")
+            placed = True
+        if not placed:
+            self.root.geometry(f"{w}x{h}+{max(0, (sw - w) // 2)}+{max(0, (sh - h) // 3)}")
+        self.root.minsize(min(880, max(640, sw - 40)), min(560, max(460, sh - 80)))
+        try:
+            if st.get("zoomed"):
+                self.root.state("zoomed")
+        except Exception:
+            pass
+        self._pending_tab = st.get("tab") if isinstance(st.get("tab"), int) else 0
+
+    def _select_initial_tab(self):
+        tabs = self.nb.tabs()
+        if not tabs:
+            return
+        idx = max(0, min(int(self._pending_tab or 0), len(tabs) - 1))
+        try:
+            self.nb.select(tabs[idx])
+        except Exception:
+            pass
+
+    def _current_tab_index(self) -> int:
+        try:
+            return list(self.nb.tabs()).index(self.nb.select())
+        except Exception:
+            return 0
+
+    def _on_tab_changed(self, _e=None):
+        self._schedule_ui_state_save()
+
+    def _schedule_ui_state_save(self):
+        if self._ui_save_job is not None:
+            try:
+                self.root.after_cancel(self._ui_save_job)
+            except Exception:
+                pass
+        try:
+            self._ui_save_job = self.root.after(400, self._save_ui_state)
+        except Exception:
+            self._ui_save_job = None
+
+    def _save_ui_state(self, force: bool = False):
+        """记住标签页 + 窗口大小；任何失败都静默忽略。"""
+        self._ui_save_job = None
+        try:
+            if not self.root.winfo_exists():
+                return
+            if not force and not self.root.winfo_viewable():
+                return                      # 隐藏窗口（冒烟测试/自检）不写盘
+            w, h = self.root.winfo_width(), self.root.winfo_height()
+            if w < 200 or h < 200:
+                return
+            zoomed = False
+            try:
+                zoomed = self.root.state() == "zoomed"
+            except Exception:
+                pass
+            state = {"width": w, "height": h, "tab": self._current_tab_index(), "zoomed": zoomed}
+            if not zoomed:
+                state["x"] = self.root.winfo_x()
+                state["y"] = self.root.winfo_y()
+            self._ui_state_path().write_text(
+                json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _on_close(self):
+        self._save_ui_state(force=True)
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+
+    def _style_notebook(self):
+        """标签页留出内边距，文字不被截断。"""
+        try:
+            style = ttk.Style()
+            family = "Microsoft YaHei UI"
+            try:
+                family = tkfont.nametofont("TkDefaultFont").cget("family")
+            except Exception:
+                pass
+            style.configure("TNotebook.Tab", padding=(12, 6), font=(family, 10))
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # 刷新
+    # ------------------------------------------------------------------
+
+    def refresh_all(self):
+        self.refresh_kb_tree()
+        self.refresh_map_rows()
+        self.refresh_template_tree()
+        self.refresh_work_types()
+        self.refresh_manual_types()
+        self.refresh_skeleton_options()
+        self._refresh_steps()
+
+    # ------------------------------------------------------------------
+    # 界面构建
+    # ------------------------------------------------------------------
+
+    def _build_notebook(self):
+        nb = ttk.Notebook(self.root)
+        nb.pack(fill="both", expand=True, padx=6, pady=6)
+        self.nb = nb
+        self._build_kb_tab(nb)
+        self._build_map_tab(nb)
+        self._build_workbench_tab(nb)
+        self._build_templates_tab(nb)
+        self._build_index_tab(nb)
+        self._build_manual_tab(nb)
+        self._build_update_tab(nb)
+        self._build_skeleton_tab(nb)
+        nb.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+
+    def _build_statusbar(self):
+        bar = tk.Label(self.root, textvariable=self.status_var, anchor="w",
+                       relief="sunken", bd=1, padx=6)
+        bar.pack(fill="x", side="bottom")
+
+    # ------------------------------------------------------------------
+    # Tab1 知识库设置
+    # ------------------------------------------------------------------
+
+    def _build_kb_tab(self, nb):
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="① 知识库设置")
+
+        f1 = ttk.Frame(tab)
+        f1.pack(fill="x", padx=8, pady=6)
+        self.kb_var = tk.StringVar()
+        ttk.Label(f1, text="当前知识库目录：").pack(side="left")
+        self.kb_entry = ttk.Entry(f1, textvariable=self.kb_var, width=70)
+        self.kb_entry.pack(side="left", fill="x", expand=True, padx=4)
+        self.kb_entry.bind("<Return>", lambda _e: self.apply_kb_path())
+        ttk.Button(f1, text="选择目录…", command=self.pick_kb).pack(side="left", padx=2)
+        ttk.Button(f1, text="重新扫描", command=self.rescan).pack(side="left", padx=2)
+        ttk.Button(f1, text="保存配置", command=self.save_kb).pack(side="left", padx=2)
+
+        tip = ("① 目录由你决定，程序只负责「识别 → 指向 → 写入」；\n"
+               "② 选好目录即自动保存 + 自动重新扫描，②③ 页同步刷新，不用再点保存；\n"
+               "③ 程序绝不会重命名/重新规划你的目录。")
+        ttk.Label(tab, text=tip, foreground="#555").pack(anchor="w", padx=10)
+
+        ttk.Label(tab, text="自动识别的目录（目录注册表）：").pack(anchor="w", padx=10, pady=(8, 2))
+        f2 = ttk.Frame(tab)
+        f2.pack(fill="both", expand=True, padx=8)
+        cols = ("name", "path", "md", "role")
+        self.kb_tree = ttk.Treeview(f2, columns=cols, show="headings", height=12)
+        for c, t, w in (("name", "目录名", 260), ("path", "完整路径", 480),
+                        ("md", "MD 数", 80), ("role", "角色", 100)):
+            self.kb_tree.heading(c, text=t)
+            self.kb_tree.column(c, width=w, anchor="w")
+        self.kb_tree.pack(side="left", fill="both", expand=True)
+        sb = ttk.Scrollbar(f2, orient="vertical", command=self.kb_tree.yview)
+        sb.pack(side="right", fill="y")
+        self.kb_tree.configure(yscrollcommand=sb.set)
+
+        ttk.Label(tab, text="测试目录（逐类型核对路由目标是否真实存在）：").pack(anchor="w", padx=10, pady=(8, 2))
+        f3 = ttk.Frame(tab)
+        f3.pack(fill="both", expand=True, padx=8)
+        tcols = ("type", "target", "ok", "note")
+        self.test_tree = ttk.Treeview(f3, columns=tcols, show="headings", height=6)
+        for c, t, w in (("type", "类型", 110), ("target", "目标目录", 220),
+                        ("ok", "结果", 70), ("note", "说明", 620)):
+            self.test_tree.heading(c, text=t)
+            self.test_tree.column(c, width=w, anchor="w")
+        self.test_tree.pack(side="left", fill="both", expand=True)
+        sb2 = ttk.Scrollbar(f3, orient="vertical", command=self.test_tree.yview)
+        sb2.pack(side="right", fill="y")
+        self.test_tree.configure(yscrollcommand=sb2.set)
+
+        ttk.Button(tab, text="执行测试目录", command=self.run_test_routes).pack(anchor="w", padx=10, pady=4)
+
+    def pick_kb(self):
+        """选目录 = 立即保存 + 立即重扫 + 刷新 ②③ 页（不再依赖“记得点保存”）。"""
+        p = filedialog.askdirectory(parent=self.root, title="选择知识库根目录（例如 …\\历史\\19民国）")
+        if not p:
+            return
+        self.kb_var.set(p)
+        self.apply_kb_path(auto=True)
+
+    def apply_kb_path(self, auto: bool = False):
+        """选/切知识库 = 存档旧库 → 载入（或扫描生成）新库档案 → 落盘 → 刷新 ②③④ 页。"""
+        p = self.kb_var.get().strip()
+        if not p:
+            self.set_status("未设置知识库目录（可点「选择目录…」）", err=True)
+            return
+        if not os.path.isdir(p):
+            self.set_status(f"目录不存在：{p}", err=True)
+            return
+        old = str(self.cfg.get("knowledge_base") or "")
+        r = core.switch_kb(self.cfg, p, save=False)          # 每库一份档案：存旧的、载入新的
+        if not r.get("ok"):
+            self.set_status("；".join(r.get("report") or ["切换知识库失败"]), err=True)
+            return
+        if not self._persist(f"知识库目录：{p}"):
+            return
+        rows = core.scan_kb(p)
+        self.kb_rows = rows
+        self.refresh_kb_tree()
+        self.refresh_all()
+        log = self._default_log()
+        if old and core.profile_key(old) != core.profile_key(p):
+            self.log(log, f"· 知识库切换：{Path(old).name} → {Path(p).name}", "head")
+        for line in (r.get("report") or []):
+            self.log(log, "· " + str(line), "info")
+        self.set_status(f"已切换到 {Path(p).name}：{r.get('types')} 个类型"
+                        + ("（载入该库档案）" if r.get("profile_found") else "（已扫描生成该库档案）")
+                        + f"｜模板库 {Path(r['templates_dir']).name if r.get('templates_dir') else '未找到'}")
+
+    def save_kb(self):
+        """兼容入口：与 apply_kb_path 等价。"""
+        self.apply_kb_path()
+
+    def rescan(self):
+        p = self.kb_var.get().strip()
+        if not p or not os.path.isdir(p):
+            self.set_status("目录不存在：请重新选择", err=True)
+            return
+        rows = core.scan_kb(p)
+        self.kb_rows = rows
+        self.refresh_kb_tree()
+        self.refresh_all()
+        self.set_status(f"扫描完成：识别 {len(rows)} 个目录（自动读取实际文件夹，不创建任何目录）")
+
+    def refresh_kb_tree(self):
+        if not hasattr(self, "kb_tree"):
+            return
+        for i in self.kb_tree.get_children():
+            self.kb_tree.delete(i)
+        for r in self.kb_rows:
+            self.kb_tree.insert("", "end", values=(r["name"], r["path"], r["md_count"], r["role"]))
+
+    def run_test_routes(self):
+        rows = core.test_routes(self.cfg)
+        for i in self.test_tree.get_children():
+            self.test_tree.delete(i)
+        for r in rows:
+            ok = "✓ 存在" if r["ok"] else "✗ 缺失"
+            self.test_tree.insert("", "end", values=(r["type"], r["target"], ok, r["note"]))
+        n_ok = sum(1 for r in rows if r["ok"])
+        missing = [r["type"] for r in rows if not r["ok"]]
+        self.set_status(f"测试目录完成：{n_ok}/{len(rows)} 个类型路由命中实际目录"
+                        + (f"；缺失：{'、'.join(missing)}" if missing else ""))
+
+    # ------------------------------------------------------------------
+    # Tab2 类型映射
+    # ------------------------------------------------------------------
+
+    def _build_map_tab(self, nb):
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="② 类型映射")
+
+        tip = ("AI 只负责判定「实体类型」，写入哪个目录由本映射表决定（程序查表路由，不猜测）。\n"
+               "表格里双击「目标目录 / 模板文件」单元格即可就地修改，改完自动保存；下面的下拉框同样改完即存。\n"
+               "**每个知识库的映射单独存档**：①页切换知识库时会自动存下旧的、载入新的（没有档案就扫描该库目录生成）。\n"
+               "换库后也可用「🔁 按当前知识库重排映射」或「🔎 扫描当前库目录生成类型」重扫；"
+               "目录名可以手输（不存在的目录在写入时会自动创建）。")
+        ttk.Label(tab, text=tip, foreground="#555", justify="left").pack(anchor="w", padx=10, pady=4)
+
+        # 实时状态：当前知识库 + 该库里有哪些可用目录 + 映射是否失效（换库后一眼看出问题）
+        self.map_status_var = tk.StringVar()
+        self.map_status_label = ttk.Label(tab, textvariable=self.map_status_var, foreground="#333",
+                                          justify="left", wraplength=1180)
+        self.map_status_label.pack(anchor="w", padx=10, pady=(0, 4))
+
+        f1 = ttk.Frame(tab)
+        f1.pack(fill="both", expand=True, padx=8)
+        cols = ("type", "dir", "tpl")
+        self.map_tree = ttk.Treeview(f1, columns=cols, show="headings", height=12)
+        for c, t, w in (("type", "实体类型", 130), ("dir", "目标目录（类型→目录）", 420),
+                        ("tpl", "模板文件", 300)):
+            self.map_tree.heading(c, text=t)
+            self.map_tree.column(c, width=w, anchor="w")
+        self.map_tree.pack(side="left", fill="both", expand=True)
+        sb = ttk.Scrollbar(f1, orient="vertical", command=self.map_tree.yview)
+        sb.pack(side="right", fill="y")
+        self.map_tree.configure(yscrollcommand=sb.set)
+        self.map_tree.bind("<<TreeviewSelect>>", self._on_map_select)
+        self.map_tree.bind("<Double-Button-1>", self._on_map_double)
+
+        f2 = ttk.Frame(tab)
+        f2.pack(fill="x", padx=8, pady=6)
+        self.map_type_var = tk.StringVar()
+        self.map_dir_var = tk.StringVar()
+        self.map_tpl_var = tk.StringVar()
+        self._map_dir_combo = None
+        self._map_tpl_combo = None
+
+        ttk.Label(f2, text="类型：").grid(row=0, column=0, sticky="w")
+        self.map_type_combo = ttk.Combobox(f2, textvariable=self.map_type_var, state="readonly", width=14)
+        self.map_type_combo.grid(row=0, column=1, padx=4)
+        ttk.Label(f2, text="→ 目标目录：").grid(row=0, column=2, sticky="w")
+        self.map_dir_combo = ttk.Combobox(f2, textvariable=self.map_dir_var, width=34)
+        self.map_dir_combo.grid(row=0, column=3, padx=4)
+        ttk.Label(f2, text="模板：").grid(row=0, column=4, sticky="w")
+        self.map_tpl_combo = ttk.Combobox(f2, textvariable=self.map_tpl_var, width=24)
+        self.map_tpl_combo.grid(row=0, column=5, padx=4)
+
+        ttk.Button(f2, text="应用修改", command=self.apply_map_row).grid(row=0, column=6, padx=6)
+        ttk.Button(f2, text="保存映射", command=self.save_map).grid(row=1, column=6, padx=6)
+
+        ttk.Label(f2, text="新类型名：").grid(row=1, column=0, sticky="w", pady=4)
+        self.new_type_var = tk.StringVar()
+        ttk.Entry(f2, textvariable=self.new_type_var, width=14).grid(row=1, column=1, padx=4)
+        ttk.Button(f2, text="添加类型", command=self.add_type).grid(row=1, column=2, padx=4)
+        ttk.Button(f2, text="删除选中类型", command=self.del_type).grid(row=1, column=3, padx=4)
+        ttk.Button(f2, text="重填为当前库映射", command=self.reset_map).grid(row=1, column=4, padx=4)
+        self.btn_remap = ttk.Button(f2, text="🔁 按当前知识库重排映射",
+                                    command=self.open_route_suggest)
+        self.btn_remap.grid(row=1, column=5, padx=4)
+        self.btn_ensure_dirs = ttk.Button(f2, text="📁 按映射创建/检查目录",
+                                          command=self.do_ensure_dirs)
+        self.btn_ensure_dirs.grid(row=1, column=6, padx=4)
+        self.btn_scan_types = ttk.Button(f2, text="🔎 扫描当前库目录生成类型",
+                                         command=self.do_scan_types)
+        self.btn_scan_types.grid(row=2, column=0, columnspan=2, sticky="w", padx=4, pady=(4, 0))
+
+        # 改完即存：下拉框选中 / 回车 / 焦点离开都自动落盘
+        self.map_type_combo.bind("<<ComboboxSelected>>", self._on_map_type_picked)
+        for cb in (self.map_dir_combo, self.map_tpl_combo):
+            cb.bind("<<ComboboxSelected>>", self._on_map_editor_changed)
+            cb.bind("<Return>", self._on_map_editor_changed)
+            cb.bind("<FocusOut>", self._on_map_editor_changed)
+
+    def refresh_map_rows(self):
+        if not hasattr(self, "map_tree"):
+            return
+        for i in self.map_tree.get_children():
+            self.map_tree.delete(i)
+        types = sorted((self.cfg.get("routes") or {}).keys())
+        self.map_type_combo["values"] = types
+        for t in types:
+            d = (self.cfg.get("routes") or {}).get(t, "")
+            tpl = (self.cfg.get("template_routes") or {}).get(t, "通用.md")
+            self.map_tree.insert("", "end", values=(t, d, tpl))
+        # 目录下拉：实际扫描到的目录名 + 允许手动输入任意目录名
+        kb = core.resolve_kb(self.cfg)
+        rows = core.scan_kb(kb) if kb else []
+        self._reg_names = [r["name"] for r in rows]
+        self.map_dir_combo["values"] = self._reg_names + ["（手动输入目录名）"]
+        # 模板下拉：模板目录实际 .md 文件 + 内置模板
+        tpl_names = []
+        td = core.templates_dir(self.cfg)
+        if td:
+            tpl_names = [p.name for p in core.list_template_files(td)]
+        tpl_names += [n + ".md" for n in tmpl_mod.BUILTIN_TEMPLATES.keys()]
+        tpl_names = list(dict.fromkeys(tpl_names))
+        self.map_tpl_combo["values"] = tpl_names
+        self.refresh_map_status()
+
+    def refresh_map_status(self):
+        """②页顶部实时状态：当前知识库、可用目录数、映射是否失效（换库后一眼看出该点什么）。"""
+        if not hasattr(self, "map_status_label"):
+            return
+        kb = core.resolve_kb(self.cfg)
+        if kb is None:
+            self.map_status_var.set("当前知识库：未设置 —— 请先到①页选择知识库目录")
+            self.map_status_label.configure(foreground="#b00020")
+            return
+        try:
+            dirs = [r["name"] for r in core.scan_kb(kb)]
+        except Exception:
+            dirs = []
+        routes = self.cfg.get("routes") or {}
+        missing = [t for t, d in routes.items()
+                   if str(d or "").strip() and not (kb / str(d)).is_dir()]
+        head = f"当前知识库：{kb}（{kb.name}）｜该库可用目录 {len(dirs)} 个"
+        if dirs:
+            head += "：" + "、".join(dirs[:8]) + ("…" if len(dirs) > 8 else "")
+        if not dirs or missing:
+            detail = ("该目录下还没有类型目录" if not dirs
+                      else f"有 {len(missing)} 个映射指向的目录不存在：" + "、".join(missing[:6])
+                           + ("…" if len(missing) > 6 else ""))
+            self.map_status_var.set(
+                head + f"\n⚠ {detail} → 先点「📁 按映射创建/检查目录」在当前库里建出来，"
+                       "或点「🔁 按当前知识库重排映射」改成该库实际的目录名")
+            self.map_status_label.configure(foreground="#b00020")
+        else:
+            self.map_status_var.set(head + "｜映射全部有效 ✓")
+            self.map_status_label.configure(foreground="#0a7d32")
+
+    def _on_map_select(self, _e):
+        sel = self.map_tree.selection()
+        if not sel:
+            return
+        t, d, tpl = self.map_tree.item(sel[0], "values")
+        self.map_type_var.set(t)
+        self.map_dir_var.set(d)
+        self.map_tpl_var.set(tpl)
+
+    def _sync_map_row_from_type(self, t: str):
+        """按类型名把该行现有配置填进编辑区（不写盘）。"""
+        routes = self.cfg.get("routes") or {}
+        if t not in routes:
+            return
+        self.map_dir_var.set(routes.get(t, ""))
+        self.map_tpl_var.set((self.cfg.get("template_routes") or {}).get(t, "通用.md"))
+        for iid in self.map_tree.get_children():
+            if self.map_tree.item(iid, "values")[0] == t:
+                self.map_tree.selection_set(iid)
+                self.map_tree.see(iid)
+                break
+
+    def _on_map_type_picked(self, _e=None):
+        t = self.map_type_var.get().strip()
+        if t:
+            self._sync_map_row_from_type(t)
+        self.set_status(f"当前编辑：{t}（改动会自动保存）" if t else "请选择类型", err=not t)
+
+    def _on_map_editor_changed(self, _e=None):
+        """下拉框/输入框变化 → 自动应用并落盘。"""
+        if self._commit_map_row(save=True, silent=True, only_if_changed=True):
+            self._refresh_steps()
+        return "break"
+
+    def _commit_map_row(self, save: bool = True, silent: bool = False,
+                        only_if_changed: bool = True) -> bool:
+        """把编辑区的类型/目录/模板写进 cfg（可选立即保存）。"""
+        t = self.map_type_var.get().strip()
+        if not t:
+            if not silent:
+                self.set_status("请选择类型", err=True)
+            return False
+        d = self.map_dir_var.get().strip()
+        if d == "（手动输入目录名）":
+            d = ""
+        tpl = self.map_tpl_var.get().strip() or "通用.md"
+        routes = self.cfg.setdefault("routes", {})
+        tpl_routes = self.cfg.setdefault("template_routes", {})
+        changed = (t not in routes) or (routes.get(t, "") != d) or (tpl_routes.get(t, "") != tpl)
+        if only_if_changed and not changed:
+            if not silent:
+                self.set_status(f"映射未变化：{t} → {d or '（未指定）'}")
+            return True
+        routes[t] = d
+        tpl_routes[t] = tpl
+        self.refresh_map_rows()
+        if save:
+            self._persist(f"映射：{t} → {d or '（未指定）'}（模板 {tpl}）")
+        return True
+
+    def apply_map_row(self):
+        self._commit_map_row(save=True, silent=False, only_if_changed=False)
+
+    def _on_map_double(self, event):
+        """双击单元格就地编辑（目标目录 / 模板文件两列）。"""
+        tree = self.map_tree
+        if tree.identify_region(event.x, event.y) != "cell":
+            return
+        col = tree.identify_column(event.x)
+        row = tree.identify_row(event.y)
+        if not row or col not in ("#2", "#3"):
+            return
+        vals = tree.item(row, "values")
+        if not vals:
+            return
+        t, cur_dir, cur_tpl = vals[0], vals[1], vals[2]
+        self.map_type_var.set(t)
+        self._sync_map_row_from_type(t)
+        bbox = tree.bbox(row, col)
+        if not bbox or not bbox[2]:
+            return
+        x, y, w, h = bbox
+        values = self.map_dir_combo["values"] if col == "#2" else self.map_tpl_combo["values"]
+        cur = cur_dir if col == "#2" else cur_tpl
+        ed = ttk.Combobox(tree, values=list(values), state="normal")
+        ed.set(cur)
+        ed.place(x=x, y=y, width=w, height=h)
+        ed.focus_set()
+        try:
+            ed.selection_range(0, "end")
+        except Exception:
+            pass
+        done = {"closed": False}
+
+        def commit(_e=None):
+            if done["closed"]:
+                return
+            done["closed"] = True
+            new = ed.get().strip()
+            try:
+                ed.destroy()
+            except Exception:
+                pass
+            if new == cur:
+                self.set_status(f"未修改：{t}")
+                return
+            if col == "#2":
+                self.map_dir_var.set("" if new == "（手动输入目录名）" else new)
+            else:
+                self.map_tpl_var.set(new or "通用.md")
+            self._commit_map_row(save=True, silent=False, only_if_changed=False)
+
+        def cancel(_e=None):
+            if done["closed"]:
+                return
+            done["closed"] = True
+            try:
+                ed.destroy()
+            except Exception:
+                pass
+            self.set_status("已取消编辑")
+
+        ed.bind("<<ComboboxSelected>>", commit)
+        ed.bind("<Return>", commit)
+        ed.bind("<FocusOut>", commit)
+        ed.bind("<Escape>", cancel)
+
+    def save_map(self):
+        """兼容入口：映射本来就会自动保存，这里再写一次并整体刷新。"""
+        self.refresh_map_rows()
+        self.refresh_all()
+        self._persist("映射配置（config.json）")
+
+    def add_type(self):
+        t = self.new_type_var.get().strip()
+        if not t:
+            self.set_status("请输入新类型名", err=True)
+            return
+        self.cfg.setdefault("routes", {})[t] = ""
+        self.cfg.setdefault("template_routes", {})[t] = "通用.md"
+        self.new_type_var.set("")
+        self.refresh_map_rows()
+        self.refresh_work_types()
+        self._persist(f"已添加类型：{t}（请在表格里为它指定目标目录）")
+
+    def del_type(self):
+        sel = self.map_tree.selection()
+        if not sel:
+            self.set_status("请先在表格中选择要删除的类型", err=True)
+            return
+        t = self.map_tree.item(sel[0], "values")[0]
+        self.cfg.get("routes", {}).pop(t, None)
+        self.cfg.get("template_routes", {}).pop(t, None)
+        self.refresh_map_rows()
+        self.refresh_work_types()
+        self._persist(f"已删除类型：{t}")
+
+    def reset_map(self):
+        """重填映射 = 按**当前知识库**扫描出的映射（不再是写死的民国目录名）。"""
+        kb = core.resolve_kb(self.cfg)
+        if kb is None:
+            self.set_status("请先在①页选择知识库目录", err=True)
+            return
+        det = core.detect_route_profile(self.cfg, kb)
+        routes = det.get("routes") or {}
+        if not routes:
+            messagebox.showinfo("重填映射", f"当前知识库下没有可识别的类型目录：\n{kb}\n\n"
+                                            "请先用「📁 按映射创建/检查目录」创建目录，或手工填写映射。")
+            self.set_status("该库下没有可用目录，未能重填映射", err=True)
+            return
+        if not messagebox.askyesno("重填为当前库映射",
+                                   f"将按**当前知识库**（{kb.name}）扫描出的 {len(routes)} 个类型重填映射，"
+                                   "并同步更新该库档案，是否继续？"):
+            self.set_status("已取消重填映射")
+            return
+        self.cfg["routes"] = dict(routes)
+        self.cfg["template_routes"] = dict(det.get("template_routes") or {})
+        core.save_kb_profile(self.cfg, kb, save=False)
+        self.refresh_map_rows()
+        self.refresh_work_types()
+        self._persist(f"已按当前库重填 {len(routes)} 个类型的映射")
+
+    def do_scan_types(self):
+        """扫描**当前知识库**目录，生成"类型 → 目录"映射（换库/新建库时用）。"""
+        kb = core.resolve_kb(self.cfg)
+        if kb is None:
+            self.set_status("请先在①页选择知识库目录", err=True)
+            return
+        det = core.detect_route_profile(self.cfg, kb)
+        routes = det.get("routes") or {}
+        if not routes:
+            messagebox.showinfo("扫描当前库", f"该库下没有可识别的目录：\n{kb}\n\n"
+                                            "可先点「📁 按映射创建/检查目录」建目录，或手工填写映射。")
+            self.set_status("当前库下没有可识别的类型目录", err=True)
+            return
+        lines = "\n".join(f"  {t} → {d}" for t, d in list(routes.items())[:16])
+        more = f"\n  …（共 {len(routes)} 项）" if len(routes) > 16 else ""
+        if not messagebox.askyesno("扫描当前库目录生成类型",
+                                   f"当前知识库：{kb}\n\n将收录 {len(routes)} 个类型：\n{lines}{more}\n\n"
+                                   "是否用这套映射替换当前映射（并更新该库档案）？"):
+            self.set_status("已取消扫描生成类型")
+            return
+        self.cfg["routes"] = dict(routes)
+        self.cfg["template_routes"] = dict(det.get("template_routes") or {})
+        core.save_kb_profile(self.cfg, kb, save=False)
+        self.refresh_map_rows()
+        self.refresh_work_types()
+        log = self._default_log()
+        for t, d in routes.items():
+            self.log(log, f"· {t} → {d}", "info")
+        self._persist(f"已按当前库目录生成 {len(routes)} 个类型")
+
+    def do_ensure_dirs(self):
+        """按②页映射，在**当前知识库**（①页所选目录）里创建/检查每个类型的目录。"""
+        kb = core.resolve_kb(self.cfg)
+        if kb is None:
+            self.set_status("请先在①页选择知识库目录", err=True)
+            return
+        r = core.ensure_route_dirs(self.cfg, create=True,
+                                   extra=("00 首页", "Templates（模板）", "Assets（图片地图）",
+                                          "Attachments（PDF）"))
+        log = self._default_log()
+        for line in (r.get("report") or []):
+            self.log(log, "· " + str(line), "info")
+        if r.get("created"):
+            self.log(log, "✓ 已创建：" + "、".join(r["created"]), "ok")
+        if r.get("failed"):
+            self.log(log, "✗ 失败：" + "、".join(r["failed"]), "err")
+            self.set_status(f"有 {len(r['failed'])} 个目录建失败（详情见日志）", err=True)
+        else:
+            self.set_status(f"目录检查完成：新建 {len(r.get('created') or [])} 个、"
+                            f"已存在 {len(r.get('existing') or [])} 个（{kb.name}）")
+        self.refresh_map_rows()
+
+    def open_route_suggest(self):
+        """按**当前知识库**的目录名猜一套映射，弹窗里预览/改完再一键应用（换知识库后重排用）。"""
+        kb = core.resolve_kb(self.cfg)
+        if kb is None:
+            self.set_status("请先设置知识库目录（①页）", err=True)
+            return None
+        try:
+            sug = core.suggest_routes_for_kb(self.cfg) or {}
+        except Exception as exc:  # noqa: BLE001
+            self.set_status(f"重排映射失败：{type(exc).__name__}: {exc}", err=True)
+            return None
+        dirs = [r["name"] for r in (core.scan_kb(kb) or [])]
+        routes = self.cfg.get("routes") or {}
+        types = sorted(routes.keys())
+
+        win = tk.Toplevel(self.root)
+        win.title("🔁 按当前知识库重排映射")
+        try:
+            win.transient(self.root)
+            win.grab_set()
+        except Exception:
+            pass
+        holder = ttk.Frame(win, padding=10)
+        holder.pack(fill="both", expand=True)
+        ttk.Label(holder, justify="left", foreground="#444",
+                  text=("以下是按当前知识库目录名猜出的映射，可以直接改（下拉里是该库实际目录）；"
+                        "留空的表示没猜出来，请手动选或留空跳过。\n"
+                        f"当前知识库：{kb}")).pack(anchor="w")
+
+        fit = ttk.Frame(holder)
+        fit.pack(fill="both", expand=True, pady=6)
+        tree = ttk.Treeview(fit, columns=("type", "old", "new"), show="headings", height=12)
+        for c, txt, w in (("type", "类型", 120), ("old", "当前目录（可能已失效）", 300),
+                          ("new", "建议目录（双击可改）", 320)):
+            tree.heading(c, text=txt)
+            tree.column(c, width=w, anchor="w")
+        tree.pack(side="left", fill="both", expand=True)
+        sb = ttk.Scrollbar(fit, orient="vertical", command=tree.yview)
+        sb.pack(side="right", fill="y")
+        tree.configure(yscrollcommand=sb.set)
+
+        state: dict = {"values": {}}
+        for t in types:
+            old = str(routes.get(t) or "")
+            new = str(sug.get(t) or "")
+            state["values"][t] = new
+            tree.insert("", "end", iid=t, values=(t, old, new or "（留空跳过）"))
+
+        def edit_cell(event):
+            if tree.identify_region(event.x, event.y) != "cell":
+                return
+            if tree.identify_column(event.x) != "#3":
+                return
+            row = tree.identify_row(event.y)
+            if not row:
+                return
+            bbox = tree.bbox(row, "#3")
+            if not bbox or not bbox[2]:
+                return
+            x, y, w, h = bbox
+            ed = ttk.Combobox(tree, values=dirs, state="normal")
+            ed.set(state["values"].get(row, ""))
+            ed.place(x=x, y=y, width=w, height=h)
+            ed.focus_set()
+            done = {"closed": False}
+
+            def commit(_e=None):
+                if done["closed"]:
+                    return
+                done["closed"] = True
+                val = ed.get().strip()
+                try:
+                    ed.destroy()
+                except Exception:
+                    pass
+                if val == "（留空跳过）":
+                    val = ""
+                state["values"][row] = val
+                tree.item(row, values=(row, tree.item(row, "values")[1], val or "（留空跳过）"))
+            def cancel(_e=None):
+                if done["closed"]:
+                    return
+                done["closed"] = True
+                try:
+                    ed.destroy()
+                except Exception:
+                    pass
+            ed.bind("<<ComboboxSelected>>", commit)
+            ed.bind("<Return>", commit)
+            ed.bind("<FocusOut>", commit)
+            ed.bind("<Escape>", cancel)
+        tree.bind("<Double-Button-1>", edit_cell)
+
+        n_ready = sum(1 for v in state["values"].values() if str(v).strip())
+        bar = ttk.Frame(holder)
+        bar.pack(fill="x")
+        ttk.Label(bar, foreground="#666",
+                  text=f"猜出 {n_ready} / {len(types)} 项（留空的会跳过，不改动原映射）").pack(side="left")
+
+        def do_apply():
+            mapping = {t: v for t, v in state["values"].items() if str(v).strip()}
+            if not mapping:
+                self.set_status("没有可应用的映射（建议目录都是空的）", err=True)
+                return
+            changed = core.apply_routes(self.cfg, mapping, save=True)
+            try:
+                win.grab_release()
+            except Exception:
+                pass
+            win.destroy()
+            self.refresh_map_rows()
+            self.refresh_work_types()
+            self._refresh_steps()
+            log = self._default_log()
+            if changed:
+                for t, desc in list(changed.items())[:20]:
+                    self.log(log, f"✓ {t}：{desc}", "ok")
+                if len(changed) > 20:
+                    self.log(log, f"   （其余 {len(changed) - 20} 项略）", "info")
+                self.set_status(f"已按当前知识库重排映射：改动 {len(changed)} 项（②页已刷新）")
+            else:
+                self.set_status("映射没有变化（建议与实际一致）")
+
+        ttk.Button(bar, text="✅ 应用并保存", command=do_apply).pack(side="right", padx=4)
+        ttk.Button(bar, text="取消",
+                   command=lambda: (win.grab_release() if win.winfo_exists() else None,
+                                    win.destroy())).pack(side="right", padx=4)
+        win.update_idletasks()
+        w = min(920, max(720, win.winfo_reqwidth()))
+        h = min(600, max(420, win.winfo_reqheight()))
+        try:
+            x = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - w) // 2)
+            y = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - h) // 3)
+            win.geometry(f"{w}x{h}+{x}+{y}")
+        except Exception:
+            pass
+        win.lift()
+        win.focus_set()
+        win._route_state = state          # 便于自动化测试/排查
+        win._route_apply = do_apply
+        win._route_tree = tree
+        return win
+
+    # ------------------------------------------------------------------
+    # Tab3 AI 工作台（引导式步骤条）
+    # ------------------------------------------------------------------
+
+    def _build_workbench_tab(self, nb):
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="③ AI 工作台")
+        self.work_tab = tab
+
+        # 关键词 + 类型
+        f0 = ttk.Frame(tab)
+        f0.pack(fill="x", padx=8, pady=(6, 2))
+        ttk.Label(f0, text="词条 / 关键词：").pack(side="left")
+        self.topic_var = tk.StringVar()
+        self.topic_entry = ttk.Entry(f0, textvariable=self.topic_var, width=52)
+        self.topic_entry.pack(side="left", fill="x", expand=True, padx=4)
+        self.topic_entry.bind("<Return>", self._on_topic_enter)
+        self.topic_entry.bind("<Control-Return>", lambda _e: self.do_run_all())
+        ttk.Label(f0, text="类型：").pack(side="left")
+        self.work_type_var = tk.StringVar()
+        self.work_type_combo = ttk.Combobox(f0, textvariable=self.work_type_var, state="readonly", width=10)
+        self.work_type_combo.pack(side="left", padx=4)
+        ttk.Label(f0, text=SEARCH_HINT_TEXT, foreground="#777").pack(side="left")
+
+        # 步骤条：当前可用高亮 ▶，已完成打勾 ✔，未解锁 ○ 且不可点
+        steps = ttk.LabelFrame(
+            tab, text="操作步骤（新增词条主线：AI 分析 → 预览 → 写入 → 补齐双链；检索是可选的查重/参考）")
+        steps.pack(fill="x", padx=8, pady=(4, 2))
+        row = ttk.Frame(steps)
+        row.pack(fill="x", padx=4, pady=(2, 2))
+        commands = {
+            "analyze": self.do_analyze,
+            "preview": self.do_preview,
+            "write": self.do_write,
+            "backlinks": self.do_backlinks,
+        }
+        for key, label in STEP_DEFS:
+            b = tk.Button(row, text=label, command=commands[key], padx=8, pady=3,
+                          relief="solid", bd=1, cursor="hand2", highlightthickness=0,
+                          font=("Microsoft YaHei UI", 10))
+            b.pack(side="left", padx=3)
+            self._step_buttons[key] = b
+        ttk.Label(row, text="｜", foreground="#bbbbbb").pack(side="left", padx=2)
+        # 检索是辅助按钮：不参与解锁/打勾，点了只是查重与给 AI 备料（关键词变化时也会自动跑）
+        self.btn_search = ttk.Button(row, text=SEARCH_BTN_TEXT, command=self.do_search)
+        self.btn_search.pack(side="left", padx=3)
+        row2 = ttk.Frame(steps)
+        row2.pack(fill="x", padx=4, pady=(2, 4))
+        self.btn_run_all = ttk.Button(row2, text="▶ 一键分析并预览（先自动检索作参考）",
+                                      command=self.do_run_all)
+        self.btn_run_all.pack(side="left", padx=3)
+        self.btn_manual = ttk.Button(row2, text="手动模式（跳过 AI）", command=self.enable_manual_mode)
+        self.btn_manual.pack(side="left", padx=6)
+        self.btn_open_note = ttk.Button(row2, text="打开该词条", command=self.open_same_title_note,
+                                        state="disabled")
+        self.btn_open_note.pack(side="left", padx=6)
+        self.btn_open_dir = ttk.Button(row2, text="打开所在文件夹", command=self.open_last_dir,
+                                       state="disabled")
+        self.btn_open_dir.pack(side="left", padx=6)
+        ttk.Label(row2, text="Ctrl+回车 = 一键分析并预览", foreground="#777").pack(side="right", padx=6)
+        # 配图一行：手动取图（本地图库 → 维基百科）+ 写入时是否自动带本地图
+        row3 = ttk.Frame(steps)
+        row3.pack(fill="x", padx=4, pady=(0, 2))
+        self.btn_image = ttk.Button(row3, text="🖼 配图", command=self.do_acquire_image)
+        self.btn_image.pack(side="left", padx=3)
+        self.auto_img_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(row3, text="写入时自动带本地配图（联网取图只在点「🖼 配图」时发生）",
+                        variable=self.auto_img_var).pack(side="left", padx=6)
+        self.img_state_var = tk.StringVar(value="配图：未选（勾选左侧可自动带本地图库的图）")
+        ttk.Label(row3, textvariable=self.img_state_var, foreground="#0b3d91").pack(side="left", padx=8)
+        ttk.Label(steps, textvariable=self.step_hint_var, foreground="#0b3d91",
+                  anchor="w").pack(fill="x", padx=6, pady=(0, 4))
+
+        # 标题 / 摘要（AI 回填，可手改 = 离线手动模式入口）
+        f2 = ttk.Frame(tab)
+        f2.pack(fill="x", padx=8, pady=4)
+        ttk.Label(f2, text="类型(结果)：").grid(row=0, column=0, sticky="w")
+        self.result_type_var = tk.StringVar()
+        ttk.Entry(f2, textvariable=self.result_type_var, width=10).grid(row=0, column=1, padx=2)
+        ttk.Label(f2, text="标题：").grid(row=0, column=2, sticky="w")
+        self.title_var = tk.StringVar()
+        ttk.Entry(f2, textvariable=self.title_var, width=44).grid(row=0, column=3, padx=2)
+        ttk.Label(f2, text="摘要：").grid(row=0, column=4, sticky="w")
+        self.summary_var = tk.StringVar()
+        ttk.Entry(f2, textvariable=self.summary_var, width=60).grid(row=0, column=5, padx=2)
+
+        # 检索命中 + 日志/预览（左右可拖动）
+        f3 = ttk.PanedWindow(tab, orient="horizontal")
+        f3.pack(fill="both", expand=True, padx=8, pady=4)
+        self.work_paned = f3
+
+        lf = ttk.LabelFrame(f3, text=SEARCH_PANEL_TITLE)
+        f3.add(lf, weight=1)
+        self.hit_list = tk.Listbox(lf, height=10)
+        self.hit_list.pack(fill="both", expand=True, padx=4, pady=4)
+        self.hit_list.bind("<Double-Button-1>", self._on_hit_double)
+
+        rf = ttk.LabelFrame(f3, text="日志 / 预览")
+        f3.add(rf, weight=2)
+        head = ttk.Frame(rf)
+        head.pack(fill="x", padx=4, pady=(2, 0))
+        ttk.Button(head, text="复制日志", width=10,
+                   command=lambda: self.copy_log(self.work_log)).pack(side="left", padx=2)
+        ttk.Button(head, text="清空日志", width=10,
+                   command=lambda: self.clear_log(self.work_log)).pack(side="left", padx=2)
+        self.btn_open_image = ttk.Button(head, text="打开图片", width=10,
+                                         command=self.open_hit_image, state="disabled")
+        self.btn_open_image.pack(side="left", padx=2)
+        ttk.Label(head, text="（错误详情可直接选中复制）", foreground="#777").pack(side="left", padx=6)
+        body = ttk.Frame(rf)
+        body.pack(fill="both", expand=True, padx=4, pady=4)
+        self.work_log = tk.Text(body, wrap="none", state="disabled", height=10,
+                                bg="#fdfdfd", font=("Microsoft YaHei UI", 10))
+        vsb = ttk.Scrollbar(body, orient="vertical", command=self.work_log.yview)
+        hsb = ttk.Scrollbar(body, orient="horizontal", command=self.work_log.xview)
+        self.work_log.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        self.work_log.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+        body.rowconfigure(0, weight=1)
+        body.columnconfigure(0, weight=1)
+        self.work_log.tag_configure("info", foreground="#222")
+        self.work_log.tag_configure("ok", foreground="#0a7d32")
+        self.work_log.tag_configure("err", foreground="#b00020")
+        self.work_log.tag_configure("head", foreground="#0b3d91", font=("Microsoft YaHei UI", 12, "bold"))
+
+        # AI 设置放最后：小屏时先被压缩的是它，关键按钮始终可见
+        self._build_ai_settings(tab)
+
+    def _build_ai_settings(self, tab):
+        f = ttk.LabelFrame(tab, text="AI 设置（可随时修改；没 Key 也能用手动模式）")
+        f.pack(fill="x", padx=8, pady=4)
+        ai = self.cfg.get("ai", {})
+        self.ai_base_var = tk.StringVar(value=ai.get("base_url", ""))
+        self.ai_key_var = tk.StringVar(value=ai.get("api_key", ""))
+        self.ai_model_var = tk.StringVar(value=ai.get("model", "deepseek-chat"))
+        self.ai_temp_var = tk.StringVar(value=str(ai.get("temperature", 0.3)))
+        self.ai_max_var = tk.StringVar(value=str(ai.get("max_tokens", 8000)))
+
+        ttk.Label(f, text="Base URL：").grid(row=0, column=0, sticky="w", padx=4, pady=2)
+        ttk.Entry(f, textvariable=self.ai_base_var, width=46).grid(row=0, column=1, padx=4)
+        ttk.Label(f, text="API Key：").grid(row=0, column=2, sticky="w", padx=4)
+        ttk.Entry(f, textvariable=self.ai_key_var, width=52, show="•").grid(row=0, column=3, padx=4)
+        ttk.Label(f, text="模型：").grid(row=1, column=0, sticky="w", padx=4)
+        ttk.Entry(f, textvariable=self.ai_model_var, width=24).grid(row=1, column=1, sticky="w", padx=4)
+        ttk.Label(f, text="Temperature：").grid(row=1, column=2, sticky="w", padx=4)
+        ttk.Entry(f, textvariable=self.ai_temp_var, width=8).grid(row=1, column=3, sticky="w", padx=4)
+        ttk.Button(f, text="保存 AI 设置", command=self.save_ai).grid(row=1, column=4, padx=6)
+        self.btn_test_ai = ttk.Button(f, text="测试连接", command=self.test_ai)
+        self.btn_test_ai.grid(row=1, column=5, padx=4)
+        ttk.Label(f, text="max_tokens：").grid(row=2, column=0, sticky="w", padx=4, pady=2)
+        ttk.Entry(f, textvariable=self.ai_max_var, width=10).grid(row=2, column=1, sticky="w", padx=4)
+        ttk.Label(f, text="推理模型（deepseek-flash / deepseek-reasoner）的思考也占额度：建议 8000～16000，"
+                          "输出被截断时程序会自动翻倍重试；追求速度可换成 deepseek-chat。",
+                  foreground="#666").grid(row=2, column=2, columnspan=4, sticky="w", padx=4)
+
+    def save_ai(self):
+        try:
+            temp = float(self.ai_temp_var.get() or 0.3)
+        except (TypeError, ValueError):
+            self.set_status("Temperature 需要是数字，例如 0.3", err=True)
+            return
+        try:
+            max_tokens = int(float(self.ai_max_var.get() or 8000))
+        except (TypeError, ValueError):
+            self.set_status("max_tokens 需要是整数，例如 8000", err=True)
+            return
+        max_tokens = max(512, min(32000, max_tokens))
+        self.ai_max_var.set(str(max_tokens))
+        self.cfg.setdefault("ai", {})
+        self.cfg["ai"].update({
+            "provider": "deepseek",
+            "base_url": self.ai_base_var.get().strip(),
+            "api_key": self.ai_key_var.get().strip(),
+            "model": self.ai_model_var.get().strip() or "deepseek-chat",
+            "temperature": temp,
+            "max_tokens": max_tokens,
+        })
+        self._persist("AI 设置（config.json）")
+
+    def test_ai(self):
+        self.save_ai()
+        client = AIClient(**self._ai_params())
+        self.run_task(client.quick_test, self._on_quick_test, "AI 连接测试",
+                      busy=(self.btn_test_ai,))
+
+    def _on_quick_test(self, r):
+        r = self._on_result(self.work_log, r, "连接失败：")
+        if r is None:
+            return
+        self.log(self.work_log, f"✓ 连接正常：{r}", "ok")
+        self.set_status("AI 连接正常")
+
+    def _ai_params(self) -> dict:
+        ai = self.cfg.get("ai", {})
+        try:
+            temp = float(ai.get("temperature", 0.3))
+        except (TypeError, ValueError):
+            temp = 0.3
+        return {
+            "base_url": ai.get("base_url", ""),
+            "api_key": ai.get("api_key", ""),
+            "model": ai.get("model", "deepseek-chat"),
+            "temperature": temp,
+            "max_tokens": int(ai.get("max_tokens", 8000) or 8000),
+        }
+
+    def _work_types(self) -> list:
+        return ["（由 AI 判定）"] + sorted((self.cfg.get("routes") or {}).keys())
+
+    def refresh_work_types(self):
+        if hasattr(self, "work_type_combo"):
+            self.work_type_combo["values"] = self._work_types()
+            if not self.work_type_var.get():
+                self.work_type_var.set("（由 AI 判定）")
+
+    # ---------------- 步骤机 ----------------
+
+    def _reset_steps(self, *keys):
+        for k in (keys or tuple(self.step_done.keys())):
+            if k in self.step_done:
+                self.step_done[k] = False
+        self._refresh_steps()
+
+    def _manual_ready(self) -> bool:
+        """离线手动模式：类型 + 标题都自己填好了，等价于完成了“分析”这一步。"""
+        return bool(self.result_type_var.get().strip() and self.title_var.get().strip())
+
+    def _steps_availability(self) -> dict:
+        """新增词条为主线：填了关键词（或手动填好类型+标题）就能直接分析；检索不再是前置条件。"""
+        done = self.step_done
+        manual = self._manual_ready()
+        has_kw = bool(self.topic_var.get().strip())
+        return {
+            "analyze": has_kw or manual,
+            "preview": done["analyze"] or manual,
+            "write": done["preview"],
+            "backlinks": done["write"],
+        }
+
+    def _refresh_steps(self):
+        if not getattr(self, "_step_buttons", None):
+            return
+        done = self.step_done
+        avail = self._steps_availability()
+        manual = self._manual_ready() and not done["analyze"]
+        current = ""
+        for k, _ in STEP_DEFS:
+            if avail.get(k) and not done.get(k):
+                current = k
+                break
+        for k, label in STEP_DEFS:
+            btn = self._step_buttons.get(k)
+            if btn is None:
+                continue
+            if done.get(k):
+                text, bg, fg = f"✔ {label}", "#e6f4ea", "#0a7d32"
+            elif k == current:
+                text, bg, fg = f"▶ {label}", "#e8f0fe", "#0b3d91"
+            else:
+                text, bg, fg = f"○ {label}", "#f2f2f2", "#999999"
+            if k == "analyze" and manual:
+                text, bg, fg = f"▶ {label}（手动）", "#fff7e6", "#8a5a00"
+            try:
+                btn.configure(text=text, bg=bg, fg=fg, activebackground=bg,
+                              disabledforeground="#b5b5b5",
+                              state=("normal" if (avail.get(k) and not self._busy) else "disabled"))
+            except Exception:
+                pass
+        if current:
+            self.step_hint_var.set(STEP_HINTS.get(current, ""))
+        elif all(done.get(k) for k, _ in STEP_DEFS):
+            self.step_hint_var.set("✔ 主线四步全部完成。改动关键词/类型/标题后，相关步骤会自动回到待办。")
+        else:
+            self.step_hint_var.set(MANUAL_HINT)
+        if hasattr(self, "btn_run_all"):
+            self.btn_run_all.configure(state=("disabled" if self._busy else "normal"))
+        if hasattr(self, "btn_manual"):
+            self.btn_manual.configure(state=("disabled" if self._busy else "normal"))
+        if hasattr(self, "btn_open_dir"):
+            self.btn_open_dir.configure(
+                state=("normal" if (self._last_write_path and not self._busy) else "disabled"))
+        # 配图按钮同样受忙碌状态约束（联网取图期间不允许重复点）
+        for name in ("btn_image", "btn_man_image"):
+            w = getattr(self, name, None)
+            if w is not None:
+                try:
+                    w.configure(state=("disabled" if self._busy else "normal"))
+                except Exception:
+                    pass
+        # 可选辅助按钮：检索（不参与打勾）与「打开该词条」
+        btn_search = getattr(self, "btn_search", None)
+        if btn_search is not None:
+            try:
+                btn_search.configure(state=("disabled" if self._busy else "normal"))
+            except Exception:
+                pass
+        btn_open_note = getattr(self, "btn_open_note", None)
+        if btn_open_note is not None:
+            try:
+                btn_open_note.configure(
+                    state=("normal" if (self._same_title_hit and not self._busy) else "disabled"))
+            except Exception:
+                pass
+
+    def _bind_state_traces(self):
+        """手改类型/标题/摘要后，预览与写入需要重来（避免写进过期内容）。"""
+        for var in (self.result_type_var, self.title_var, self.summary_var):
+            try:
+                var.trace_add("write", self._invalidate_preview)
+            except Exception:
+                pass
+        try:
+            # 关键词变化 → 防抖自动检索（可选步骤：查重 + 给 AI 备料，不阻塞任何操作）
+            self.topic_var.trace_add("write", self._schedule_auto_search)
+        except Exception:
+            pass
+
+    def _invalidate_preview(self, *_a):
+        if self._suppress_invalidate:
+            return
+        if self._images:                      # 类型/标题变了，已配的图可能张冠李戴
+            self._images = []
+            self._set_img_state(getattr(self, "img_state_var", None), "配图：未选（标题/类型已改，请重新配图）")
+        if self.step_done.get("preview") or self.step_done.get("write") or self.step_done.get("backlinks"):
+            self.step_done["preview"] = False
+            self.step_done["write"] = False
+            self.step_done["backlinks"] = False
+        self._refresh_steps()
+
+    # ---------------- 自动检索（可选，防抖）----------------
+
+    def _schedule_auto_search(self, *_a):
+        """关键词一变就重排防抖计时：不阻塞输入、不弹窗、不写状态栏。"""
+        kw = self.topic_var.get().strip()
+        if self._search_job is not None:
+            try:
+                self.root.after_cancel(self._search_job)
+            except Exception:
+                pass
+            self._search_job = None
+        self._reset_steps("analyze", "preview", "write", "backlinks")   # 关键词变了，下游作废
+        self._same_title_hit = None
+        self._set_enabled([getattr(self, "btn_open_note", None)], False)
+        if len(kw) >= 2:
+            self._search_job = self.root.after(AUTO_SEARCH_DELAY_MS, self._auto_search)
+
+    def _auto_search(self):
+        """后台（主线程 after）跑一次离线检索；失败只记一行日志，绝不打断用户。"""
+        self._search_job = None
+        kw = self.topic_var.get().strip()
+        if len(kw) < 2 or self._busy:
+            return
+        try:
+            hits = core.find_notes(self.cfg, kw)
+        except Exception as e:  # noqa: BLE001 —— 自动检索失败不影响任何操作
+            self.log(self.work_log, f"ℹ 自动检索没跑成（不影响继续用）：{type(e).__name__}: {e}", "info")
+            return
+        self._apply_hits(hits, auto=True)
+
+    @staticmethod
+    def _same_title_hit_for(hits: list, kw: str):
+        """结果里是否有与关键词同名的词条（`kw` 或 `YYYY年-kw`）。"""
+        kw = (kw or "").strip()
+        if not kw:
+            return None
+        for h in hits or ():
+            t = str(h.get("title") or "").strip()
+            if t and t in (kw, f"{kw}年-{kw}"):
+                return h
+        return None
+
+    def _apply_hits(self, hits: list, auto: bool = False, quiet: bool = False):
+        """把结果填进列表，并按「有没有同名词条」给出提示（决定写入是新建还是增量更新）。"""
+        kw = self.topic_var.get().strip()
+        self.hits = list(hits or ())
+        self._hits_kw = kw
+        self.hit_list.delete(0, "end")
+        for h in self.hits:
+            self.hit_list.insert("end", self._hit_label(h))
+        same = self._same_title_hit_for(self.hits, kw)
+        self._same_title_hit = same
+        self._set_enabled([getattr(self, "btn_open_note", None)], bool(same))
+        if quiet:
+            return
+        count = len(self.hits)
+        key = (count, bool(same))
+        if auto and key == self._last_hit_key:
+            return                                      # 条数与“有无同名”都没变就不刷屏
+        self._last_hit_key = key
+        if same:
+            self.log(self.work_log,
+                     f"⚠ 知识库中已存在同名词条「{kw}」——写入将做增量更新（只填空、不覆盖已有内容）；"
+                     "如果你想另建一条，请改标题（可点「打开该词条」先看看现有内容）。", "err")
+        elif count:
+            self.log(self.work_log, f"ℹ 知识库中没有「{kw}」这个词条——将新建。", "info")
+            self.log(self.work_log,
+                     f"ℹ 命中 {count} 条相关词条（可双击看片段，会作为 AI 分析的参考上下文）。", "info")
+        else:
+            self.log(self.work_log,
+                     f"ℹ 知识库中没有「{kw}」这个词条，也没有相关条目——将按新词条完整生成。", "info")
+
+    def _hits_for(self, kw: str) -> list:
+        """当前关键词对应的命中：已有同关键词的缓存就复用，否则现查一次（离线、很快）。"""
+        if self._hits_kw == kw and self.hits:
+            return self.hits
+        try:
+            hits = core.find_notes(self.cfg, kw)
+        except Exception:
+            return list(self.hits or ())
+        self._apply_hits(hits, auto=True)               # 顺手刷新列表与同名词条提示
+        return hits
+
+    def _exists_for(self, kw: str) -> bool:
+        """知识库里是否已有同名词条（决定 AI 是「新建」还是「只补空缺」）。"""
+        return bool(self._same_title_hit_for(self._hits_for(kw), kw))
+
+    def open_same_title_note(self):
+        """打开与关键词同名的那个词条（.md），用系统默认程序。"""
+        h = self._same_title_hit
+        if not h:
+            self.set_status("没有同名词条可打开", err=True)
+            return
+        path = str(h.get("path") or "")
+        if path and self._open_dir(path):               # os.startfile 对文件同样有效
+            self.set_status(f"已打开词条：{path}")
+        else:
+            self.set_status(f"打开失败（可手动复制路径：{path}）", err=True)
+
+    def _on_topic_enter(self, _e=None):
+        """回车 = 走主线：一键分析并预览（检索已降级为可选/自动）。"""
+        self.do_run_all()
+        return "break"
+
+    def enable_manual_mode(self):
+        """离线手动模式：预填类型并提示填标题，之后可直接预览/写入。"""
+        t = self.result_type_var.get().strip()
+        if not t:
+            types = sorted((self.cfg.get("routes") or {}).keys())
+            if types:
+                self.result_type_var.set(types[0])
+                t = types[0]
+        if not self.title_var.get().strip():
+            self.set_status("手动模式：请在「标题」里填写笔记标题（类型已就绪），然后点「2. 预览笔记」", err=True)
+            self._refresh_steps()
+            return
+        self.set_status(f"手动模式已就绪：类型「{t}」+ 标题「{self.title_var.get().strip()}」，可直接「2. 预览笔记」")
+        self._refresh_steps()
+
+    # ---------------- 词条配图 ----------------
+
+    def _current_aliases(self) -> list:
+        """当前词条可用于配图匹配的别名：AI 的 aliases / frontmatter.别名 + 标题。"""
+        ai = self.ai or {}
+        fm = ai.get("frontmatter") if isinstance(ai.get("frontmatter"), dict) else {}
+        cands: list = []
+        for src in (ai.get("aliases"), fm.get("aliases"), fm.get("别名"), fm.get("别称"),
+                    self.title_var.get()):
+            if isinstance(src, list):
+                cands.extend(str(x).strip() for x in src)
+            elif src:
+                cands.append(str(src).strip())
+        seen, uniq = set(), []
+        for a in cands:
+            if a and a not in seen:
+                seen.add(a)
+                uniq.append(a)
+        return uniq
+
+    def _auto_images(self) -> bool:
+        """③ 页「写入时自动带本地配图」勾选值（默认勾选）。"""
+        try:
+            return bool(self.auto_img_var.get())
+        except Exception:
+            return True
+
+    def _man_auto_images(self) -> bool:
+        """⑥ 页同名勾选值。"""
+        try:
+            return bool(self.man_auto_img_var.get())
+        except Exception:
+            return True
+
+    @staticmethod
+    def _img_entry(r: dict) -> dict:
+        """把 acquire_image 的结果收敛成写进笔记用的 entry。"""
+        return {k: r.get(k) for k in ("ok", "file", "path", "source", "credit", "page")
+                if r.get(k) is not None}
+
+    def _set_img_state(self, var, msg: str):
+        try:
+            var.set(msg)
+        except Exception:
+            pass
+
+    def do_acquire_image(self):
+        """③ 页配图：本地图库优先，其次中文维基百科（联网只在点这个按钮时发生）。"""
+        title = core.sanitize_title(self.title_var.get().strip())
+        if not title:
+            self.set_status("请先填「标题」（可先检索 + AI 分析得到），再点「🖼 配图」", err=True)
+            try:
+                self.topic_entry.focus_set()
+            except Exception:
+                pass
+            return
+        aliases = self._current_aliases()
+        self.log(self.work_log, f"▶ 配图：查找「{title}」的图片（本地图库 → 中文维基百科）…", "head")
+
+        def work():
+            return core.acquire_image(self.cfg, title, aliases=aliases, allow_network=True)
+
+        self.run_task(work, self._on_acquire_image_done, "配图",
+                      busy=(getattr(self, "btn_image", None), self.btn_run_all))
+
+    def _on_acquire_image_done(self, r):
+        if isinstance(r, tuple) and r and r[0] == "ERROR":
+            self.log(self.work_log, f"✗ 配图失败：{r[1]}", "err")
+            self.set_status(f"配图失败：{r[1]}（详情见日志区）", err=True)
+            return
+        if not isinstance(r, dict):
+            self.log(self.work_log, "✗ 配图失败：返回结果异常", "err")
+            self.set_status("配图失败：返回结果异常（详情见日志区）", err=True)
+            return
+        if not r.get("ok"):
+            note = str(r.get("note") or "未取得图片")
+            self.log(self.work_log, f"✗ 配图未成功：{note}", "err")
+            self.log(self.work_log, "   → 可手动把图片放进 Assets（图片地图）后重试；标题越规范越容易匹配。", "info")
+            self.set_status(f"配图未成功：{note}", err=True)
+            return
+        entry = self._img_entry(r)
+        self._images = [entry]
+        source = str(r.get("source") or "")
+        credit = str(r.get("credit") or "")
+        self.log(self.work_log,
+                 f"✓ 配图：{entry.get('file')}（来源：{source or '未知'}{('／' + credit) if credit else ''}）", "ok")
+        self.log(self.work_log,
+                 f"   路径：{entry.get('path')}（预览/笔记里写 ![[{entry.get('file')}]]）", "info")
+        self._set_img_state(getattr(self, "img_state_var", None),
+                            f"配图：{entry.get('file')}（{source or '未知'}）")
+        self.set_status(f"配图完成：{entry.get('path')}")
+        if self.step_done.get("preview"):     # 已预览过 → 带新图刷新预览
+            self.do_preview()
+
+    def open_hit_image(self):
+        """打开最近展开的检索命中项的配图（系统默认看图程序；失败静默）。"""
+        path = self._last_hit_image
+        if not path:
+            self.set_status("还没有选中带配图的命中项：在左侧双击一条带 🖼 的记录", err=True)
+            return
+        if self._open_dir(path):
+            self.set_status(f"已打开图片：{path}")
+        else:
+            self.set_status(f"打开图片失败（可手动复制路径：{path}）", err=True)
+
+    # ---------------- 工作台操作 ----------------
+
+    def do_search(self):
+        """可选的辅助动作：查重 / 给 AI 备料。不参与步骤解锁与打勾。"""
+        kw = self.topic_var.get().strip()
+        if not kw:
+            self.set_status("请先填写词条 / 关键词", err=True)
+            self.topic_entry.focus_set()
+            return
+
+        def work():
+            return core.find_notes(self.cfg, kw)
+
+        self.run_task(work, self._on_search_done, f"检索「{kw}」",
+                      busy=(getattr(self, "btn_search", None), self.btn_run_all))
+
+    def _hit_label(self, h: dict) -> str:
+        """命中项在列表里的一行：带配图时显示数量或第一张文件名。"""
+        imgs = h.get("images") or []
+        base = f"[{h.get('score')}] {h.get('title')}"
+        if not imgs:
+            return base
+        first = str(imgs[0].get("file") or "")
+        tag = f"🖼 {first}" if len(imgs) == 1 else f"🖼×{len(imgs)} {first}".strip()
+        return f"{base}  {tag}"
+
+    def _on_search_done(self, r):
+        r = self._on_result(self.work_log, r)
+        if r is None:
+            return
+        self._apply_hits(r, auto=False)                  # 填列表 + 同名/新建提示
+        with_img = sum(1 for h in r if h.get("images"))
+        self.log(self.work_log,
+                 f"✓ 检索完成（可选步骤）：命中 {len(r)} 条（其中 {with_img} 条已有配图；双击列表项看片段）", "ok")
+        self.set_status(f"检索完成（可选）：命中 {len(r)} 条（带配图 {with_img} 条）。{STEP_HINTS['analyze']}")
+
+    def _on_hit_double(self, _e):
+        sel = self.hit_list.curselection()
+        if not sel:
+            return
+        h = self.hits[sel[0]]
+        self.log(self.work_log, f"── 片段：「{h['title']}」\n    {h['snippet'] or '(标题命中，无正文片段)'}\n    {h['path']}", "info")
+        imgs = h.get("images") or []
+        if imgs:
+            for e in imgs:
+                self.log(self.work_log, f"   🖼 {e.get('file')} → {e.get('path')}", "info")
+            self._last_hit_image = str(imgs[0].get("path") or "")
+            self._set_enabled([getattr(self, "btn_open_image", None)], bool(self._last_hit_image))
+            self.set_status(f"已展开片段 + {len(imgs)} 张配图：{h['title']}（可点「打开图片」查看）")
+        else:
+            self._last_hit_image = ""
+            self._set_enabled([getattr(self, "btn_open_image", None)], False)
+            self.set_status(f"已展开片段：{h['title']}（该词条暂无配图）")
+
+    def do_analyze(self):
+        kw = self.topic_var.get().strip()
+        if not self._steps_availability()["analyze"]:
+            self.set_status("请先填写「词条 / 关键词」；或点「手动模式」自己填类型 + 标题", err=True)
+            self.topic_entry.focus_set()
+            return
+        hint = self.work_type_var.get()
+        hint = "" if hint == "（由 AI 判定）" else hint
+        client = AIClient(**self._ai_params())
+        ok, why = client.ready()
+        if not ok:
+            self.set_status("AI 未配置：可点「手动模式」自己填类型/标题/摘要，或填好 Key 再试", err=True)
+            self.log(self.work_log, f"✗ AI 未就绪：{why}", "err")
+            self.log(self.work_log, "   → 离线可用：点「手动模式」，或切到「⑥ 手动生成笔记」。", "info")
+            return
+        hits = self._hits_for(kw)                        # 检索是可选的：没检索过就现查一次（离线、快）
+        exists = self._same_title_hit_for(hits, kw) is not None
+        self.log(self.work_log,
+                 ("⚠ 知识库中已有同名词条：本次按「增量更新」处理（只填空、不覆盖已有内容）。" if exists
+                  else "ℹ 知识库中没有同名词条：本次按「新建词条」处理。"), "info")
+        prompt = core.build_analysis_prompt(self.cfg, kw, hint, hits[:12], exists=exists)
+
+        def work():
+            return client.analyze_topic(prompt)
+
+        self.run_task(work, self._on_analyze_done, "AI 分析与抽取",
+                      busy=(self._step_buttons.get("analyze"), self.btn_run_all))
+
+    def _apply_ai_result(self, data: dict, quiet: bool = False):
+        """把 AI 结果回填到界面（类型/标题/摘要 + 字段），并标记分析完成。"""
+        self.ai = data
+        type_ = str(data.get("type") or "").strip()
+        title = core.sanitize_title(str(data.get("title") or ""))
+        summary = str(data.get("summary") or "").strip()
+        self._suppress_invalidate = True
+        try:
+            self.result_type_var.set(type_)
+            self.title_var.set(title)
+            self.summary_var.set(summary)
+        finally:
+            self._suppress_invalidate = False
+        if not quiet:
+            self.log(self.work_log, f"✓ AI 判定类型：{type_}｜标题：{title}", "ok")
+            self.log(self.work_log, f"  摘要：{summary or '（空）'}", "info")
+            fm = data.get("frontmatter") or {}
+            lk = data.get("related") or []
+            self.log(self.work_log, f"  frontmatter 字段：{'; '.join(f'{k}={v}' for k, v in list(fm.items())[:8]) or '（空）'}", "info")
+            self.log(self.work_log, f"  related 双链目标：{'、'.join(map(str, lk[:12])) or '（空）'}", "info")
+        self.step_done["analyze"] = True
+        self._refresh_steps()
+        self.set_status(f"AI 分析完成：类型「{type_}」｜标题「{title}」。{STEP_HINTS['preview']}")
+        return type_, title
+
+    def _on_analyze_done(self, r):
+        r = self._on_result(self.work_log, r)
+        if r is None or not isinstance(r, dict):
+            return
+        self._apply_ai_result(r)
+        self.log(self.work_log, "  下一步：点「2. 预览笔记」查看成型稿（未预览不会写入）", "head")
+
+    def _current_ai_terms(self) -> tuple:
+        """从当前界面/AI 缓存合成 (类型, ai_fields, ai_sections)。未走 AI 时为手动模式。"""
+        from collections import OrderedDict
+        type_ = self.result_type_var.get().strip()
+        ai_fields = dict(self.ai.get("frontmatter") or {}) if self.ai else {}
+        era = self.ai.get("era") or ""
+        imp = self.ai.get("importance") or ""
+        if era:
+            ai_fields.setdefault("时期", str(era))
+        if imp:
+            ai_fields.setdefault("重要性", str(imp))
+        content = self.ai.get("content") if self.ai else None
+        ai_sections = core.sections_from_ai(content) if content else OrderedDict()
+        return type_, ai_fields, ai_sections
+
+    def do_preview(self):
+        if not (self.step_done.get("analyze") or self._manual_ready()):
+            self.set_status("请先「1. AI 分析与抽取」；或在下方填好类型+标题（手动模式）再预览", err=True)
+            return
+        type_ = self.result_type_var.get().strip()
+        title = core.sanitize_title(self.title_var.get().strip())
+        if not type_ or not title:
+            self.set_status("请先完成 AI 分析，或在手动模式下填写类型与标题", err=True)
+            return
+        report: list = []
+        try:
+            _, ai_fields, ai_sections = self._current_ai_terms()
+            text, note = core.build_note_text(self.cfg, type_, title, self.summary_var.get().strip(),
+                                              ai_fields, ai_sections, report,
+                                              images=self._images or None,
+                                              auto_images=self._auto_images())
+        except Exception as e:  # noqa: BLE001 —— 失败详情进日志区
+            self.log(self.work_log, f"✗ 预览生成失败：{type(e).__name__}: {e}", "err")
+            self.set_status(f"预览失败：{type(e).__name__}: {e}（详情见日志区）", err=True)
+            return
+        self._show_preview(text)
+        for rep in report:
+            if "配图" in rep:
+                self.log(self.work_log, "   · " + rep, "info")
+        self.step_done["preview"] = True
+        self._refresh_steps()
+        self.log(self.work_log, f"✓ 预览生成（模板：{note}）——仅预览，未写入", "ok")
+        self.set_status(f"预览完成（模板：{note}）。{STEP_HINTS['write']}")
+
+    def _show_preview(self, text: str):
+        self.work_log.configure(state="normal")
+        self.work_log.delete("1.0", "end")
+        self.work_log.insert("end", "─── 笔记预览 ───\n", "head")
+        self.work_log.insert("end", text)
+        self._scroll_to_end(self.work_log)      # 自动滚动到底部
+        self.work_log.configure(state="disabled")
+
+    def do_write(self):
+        if not self.step_done.get("preview"):
+            self.set_status("请先「2. 预览笔记」确认内容，再写入（步骤未解锁）", err=True)
+            return
+        type_ = self.result_type_var.get().strip()
+        title = core.sanitize_title(self.title_var.get().strip())
+        if not type_ or not title:
+            self.set_status("缺少类型/标题：请先 AI 分析，或手动填写", err=True)
+            return
+        summary = self.summary_var.get().strip()
+        _, ai_fields, ai_sections = self._current_ai_terms()
+
+        def work():
+            return core.write_note(self.cfg, type_, title, summary, ai_fields, ai_sections, mode="auto",
+                                   images=self._images or None,
+                                   auto_images=self._auto_images())
+
+        self.run_task(work, self._on_write_done, "写入知识库",
+                      busy=(self._step_buttons.get("write"), self.btn_run_all))
+
+    def _on_write_done(self, r):
+        r = self._on_result(self.work_log, r)
+        if r is None:
+            return
+        if not r.get("ok"):
+            detail = "；".join(r.get("report") or ["写入失败"])
+            self.log(self.work_log, f"✗ 写入失败：{detail}", "err")
+            self.log(self.work_log, "   → 可在「② 类型映射」检查该类型的目标目录是否存在；或点「执行测试目录」。", "info")
+            self.set_status(f"写入失败：{detail}（详情见日志区）", err=True)
+            return
+        path = r.get("path") or ""
+        self._last_write_path = path
+        self._last_new_title = self.title_var.get().strip()
+        self.step_done["write"] = True
+        self._refresh_steps()
+        self.log(self.work_log, f"✓ 已{r['action']}：{path}", "ok")
+        for rep in r.get("report") or []:
+            self.log(self.work_log, "   · " + rep, "info")
+        self.log(self.work_log, f"  完整路径：{path}（点「打开所在文件夹」可直接定位）", "info")
+        self.set_status(f"{r['action']}完成，完整路径：{path}")
+
+    def open_last_dir(self):
+        if not self._last_write_path:
+            self.set_status("还没有写入记录：先「3. 写入知识库」", err=True)
+            return
+        folder = os.path.dirname(self._last_write_path)
+        if self._open_dir(folder):
+            self.set_status(f"已打开文件夹：{folder}")
+        else:
+            self.set_status(f"打开文件夹失败（可手动复制路径：{folder}）", err=True)
+
+    def do_backlinks(self):
+        if not self.step_done.get("write"):
+            self.set_status("请先「3. 写入知识库」再补齐双链（步骤未解锁）", err=True)
+            return
+        title = self._last_new_title or self.title_var.get().strip()
+        related = self.ai.get("related") or []
+        if not title:
+            self.set_status("无目标笔记：请先写入知识库", err=True)
+            return
+        if not related:
+            self.set_status("AI 未提供 related 列表，跳过双链补齐", err=True)
+            self.log(self.work_log, "✗ 无 related 列表：本次 AI 分析没有给出双链目标，可手动在笔记里补 [[…]]。", "err")
+            return
+        report: list = []
+
+        def work():
+            return core.apply_backlinks(self.cfg, core.sanitize_title(title), related, report)
+
+        self.run_task(work, self._on_backlinks_done, "补齐双链",
+                      busy=(self._step_buttons.get("backlinks"), self.btn_run_all))
+
+    def _on_backlinks_done(self, r):
+        r = self._on_result(self.work_log, r)
+        if r is None:
+            return
+        if not r.get("ok"):
+            self.log(self.work_log, "✗ 双链补齐失败：知识库未设置", "err")
+            self.set_status("双链补齐失败：知识库未设置（详情见日志区）", err=True)
+            return
+        added = len(r.get("added") or [])
+        skipped = len(r.get("skipped") or [])
+        self.step_done["backlinks"] = True
+        self._refresh_steps()
+        self.log(self.work_log, f"✓ 反向链接：新增 {added} 处（已存在跳过：{skipped}）", "ok")
+        for a in r.get("added") or []:
+            self.log(self.work_log, "   + " + a, "info")
+        self.set_status(f"双链补齐完成：新增 {added} 处，跳过 {skipped} 处")
+
+    def do_run_all(self):
+        """主按钮：先自动检索一次（离线、作参考）→ AI 分析 → 预览，每一步都写状态栏。"""
+        if self._busy:
+            self.set_status("上一步还在运行中，请稍候…", err=True)
+            return
+        kw = self.topic_var.get().strip()
+        if not kw:
+            self.set_status("请先填写词条 / 关键词（Ctrl+回车 也可一键分析并预览）", err=True)
+            self.topic_entry.focus_set()
+            return
+        self._reset_steps("analyze", "preview", "write", "backlinks")
+        self.log(self.work_log,
+                 f"▶ 一键分析并预览：自动检索（可选，作参考）→ AI 分析 → 预览（词条：{kw}）", "head")
+        self.set_status(f"一键分析并预览：正在准备「{kw}」…")
+
+        hint = self.work_type_var.get()
+        hint = "" if hint == "（由 AI 判定）" else hint
+        client = AIClient(**self._ai_params())
+        cached_hits = list(self.hits) if (self._hits_kw == kw and self.hits) else None
+
+        def work():
+            hits = cached_hits if cached_hits is not None else core.find_notes(self.cfg, kw)
+            ok, why = client.ready()
+            if not ok:
+                return {"stage": "search_only", "hits": hits, "why": why, "exists": False}
+            exists = self._same_title_hit_for(hits, kw) is not None
+            prompt = core.build_analysis_prompt(self.cfg, kw, hint, hits[:12], exists=exists)
+            try:
+                data = client.analyze_topic(prompt)
+            except AIError as e:
+                return {"stage": "search_only", "hits": hits, "why": str(e), "exists": exists}
+            return {"stage": "analyzed", "hits": hits, "data": data, "exists": exists}
+
+        self.run_task(work, self._on_run_all_done, "一键分析并预览",
+                      busy=(self.btn_run_all, self._step_buttons.get("analyze")))
+
+    def _on_run_all_done(self, r):
+        r = self._on_result(self.work_log, r)
+        if r is None:
+            return
+        hits = r.get("hits") or []
+        self._apply_hits(hits, auto=False, quiet=True)     # 填列表 + 决定「打开该词条」是否可用
+        exists = bool(r.get("exists"))
+        with_img = sum(1 for h in hits if h.get("images"))
+
+        if r.get("stage") != "analyzed":
+            why = r.get("why") or "AI 未就绪"
+            self.log(self.work_log, f"· 参考检索（可选）：命中 {len(hits)} 条，带配图 {with_img} 条", "info")
+            self.log(self.work_log, f"✗ AI 分析未执行：{why}", "err")
+            self.log(self.work_log,
+                     "   → 可点「手动模式」自己填类型/标题后预览；或填好 API Key 再点一次。", "info")
+            self.set_status(f"参考检索完成，但 AI 分析未执行：{why}（可用手动模式继续）", err=True)
+            return
+
+        type_, title = self._apply_ai_result(r.get("data") or {})
+        self.set_status(f"第 1 步完成：类型「{type_}」｜标题「{title}」。正在生成预览…")
+        self.do_preview()          # 注意：预览会重写日志区，所以汇总信息放在预览之后写
+        self.log(self.work_log,
+                 f"✓ 一键分析并预览：第 1 步（AI 分析与抽取）完成：类型「{type_}」｜标题「{title}」", "ok")
+        self.log(self.work_log,
+                 ("⚠ 知识库中已有同名词条：按「增量更新」处理（只填空、不覆盖已有内容）。" if exists
+                  else "ℹ 知识库中没有同名词条：按「新建词条」处理。"), "info")
+        self.log(self.work_log, f"· 参考检索（可选）：命中 {len(hits)} 条，带配图 {with_img} 条", "info")
+        self.log(self.work_log, "  下一步：点「3. 写入知识库」写盘（预览不会改动知识库）", "head")
+
+    # ------------------------------------------------------------------
+    # Tab4 模板管理
+    # ------------------------------------------------------------------
+
+    def _build_templates_tab(self, nb):
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="④ 模板管理")
+
+        f1 = ttk.Frame(tab)
+        f1.pack(fill="x", padx=8, pady=6)
+        ttk.Label(f1, text="模板目录：").pack(side="left")
+        self.tpl_dir_var = tk.StringVar()
+        ttk.Entry(f1, textvariable=self.tpl_dir_var, width=70, state="readonly").pack(side="left", fill="x", expand=True, padx=4)
+        ttk.Button(f1, text="打开模板目录", command=self.open_tpl_dir).pack(side="left", padx=2)
+        ttk.Button(f1, text="刷新列表", command=self.refresh_template_tree).pack(side="left", padx=2)
+        self.btn_tpl_paste = ttk.Button(f1, text="📋 粘贴模板", command=self.do_paste_template)
+        self.btn_tpl_paste.pack(side="left", padx=2)
+        self.btn_backup = ttk.Button(f1, text="📦 备份情况", command=self.show_backups)
+        self.btn_backup.pack(side="left", padx=2)
+
+        # 模板库（多时期库可共用上级模板目录；这里可以手动指定 / 恢复默认）
+        f1b = ttk.Frame(tab)
+        f1b.pack(fill="x", padx=8, pady=(0, 2))
+        ttk.Label(f1b, text="模板库：").pack(side="left")
+        self.tpl_lib_var = tk.StringVar()
+        self.tpl_lib_label = ttk.Label(f1b, textvariable=self.tpl_lib_var, foreground="#0a7d32")
+        self.tpl_lib_label.pack(side="left", padx=4)
+        self.tpl_lib_combo = ttk.Combobox(f1b, state="readonly", width=58)
+        self.tpl_lib_combo.pack(side="left", padx=6)
+        self.tpl_lib_combo.bind("<<ComboboxSelected>>", self._on_tpl_lib_picked)
+        ttk.Button(f1b, text="📂 浏览…", command=self.browse_tpl_lib).pack(side="left", padx=2)
+        ttk.Button(f1b, text="↩ 恢复默认", command=self.reset_tpl_lib).pack(side="left", padx=2)
+
+        tip = ("模板**只用你自己提供的**（程序不再带任何内置模板）：\n"
+               "① 上面「模板库」选定的模板文件夹（程序**只读**，绝不写入、不改动、不在里面建文件）；\n"
+               "② 点「📋 粘贴模板」把模板粘进来 —— 存到**程序目录**的 _模板\\<类型名>.md，不碰你的知识库。\n"
+               "两个都没有时，写笔记会明确失败并提示你来这里选/粘贴。类型→模板的指向可双击手输。")
+        ttk.Label(tab, text=tip, foreground="#555", justify="left").pack(anchor="w", padx=10, pady=2)
+
+        # ① 每个类型指向哪个模板（双击可改，改完即存）
+        f3 = ttk.Frame(tab)
+        f3.pack(fill="both", expand=True, padx=8)
+        top = ttk.Frame(f3)
+        top.pack(fill="x")
+        ttk.Label(top, foreground="#444",
+                  text="每个类型用哪个模板（双击「模板文件」可改，模板名可直接手输）：").pack(side="left")
+        self.tpl_map_tree = ttk.Treeview(f3, columns=("type", "tpl", "note"),
+                                         show="headings", height=5)
+        for c, txt, w in (("type", "实体类型", 130), ("tpl", "模板文件（双击可改）", 300),
+                          ("note", "说明", 430)):
+            self.tpl_map_tree.heading(c, text=txt)
+            self.tpl_map_tree.column(c, width=w, anchor="w")
+        self.tpl_map_tree.pack(side="left", fill="both", expand=True, pady=(2, 0))
+        sb1 = ttk.Scrollbar(f3, orient="vertical", command=self.tpl_map_tree.yview)
+        sb1.pack(side="right", fill="y")
+        self.tpl_map_tree.configure(yscrollcommand=sb1.set)
+        self.tpl_map_tree.bind("<Double-Button-1>", self._on_tpl_map_double)
+
+        # ② 仓库里的模板文件清单与状态
+        ttk.Label(tab, text="仓库模板文件清单：", foreground="#444").pack(anchor="w", padx=10,
+                                                                      pady=(6, 0))
+        f2 = ttk.Frame(tab)
+        f2.pack(fill="both", expand=True, padx=8, pady=(2, 6))
+        cols = ("tpl", "status")
+        self.tpl_tree = ttk.Treeview(f2, columns=cols, show="headings", height=5)
+        self.tpl_tree.heading("tpl", text="模板文件")
+        self.tpl_tree.heading("status", text="状态")
+        self.tpl_tree.column("tpl", width=320, anchor="w")
+        self.tpl_tree.column("status", width=560, anchor="w")
+        self.tpl_tree.pack(side="left", fill="both", expand=True)
+        sb = ttk.Scrollbar(f2, orient="vertical", command=self.tpl_tree.yview)
+        sb.pack(side="right", fill="y")
+        self.tpl_tree.configure(yscrollcommand=sb.set)
+
+    def refresh_template_tree(self):
+        if not hasattr(self, "tpl_tree"):
+            return
+        for i in self.tpl_tree.get_children():
+            self.tpl_tree.delete(i)
+        td = core.templates_dir(self.cfg)                # 每次都按当前知识库重新取（换库后跟着变）
+        self.tpl_dir_var.set(td if td else "（未设置：<知识库>/Templates（模板） 不存在）")
+        self.refresh_tpl_lib()
+        self.refresh_tpl_map()
+        used = {str(v).strip() for v in (self.cfg.get("template_routes") or {}).values()}
+        sources = core.template_sources(self.cfg)
+        seen_any = False
+        for sd in sources:                       # 只列**用户提供的**模板文件（选定文件夹 / 粘贴目录 / 库内 Templates）
+            try:
+                files = core.list_template_files(sd)
+            except Exception:
+                files = []
+            for f in files:
+                seen_any = True
+                tag = "粘贴模板" if "_模板" in str(sd) else str(sd)
+                self.tpl_tree.insert("", "end",
+                                     values=(f.name, ("✓ 已被某个类型使用" if f.name in used
+                                                      else "（未被任何类型使用）") + f"｜来源：{tag}"))
+        if not sources:
+            self.tpl_tree.insert("", "end",
+                                 values=("（还没有模板）", "请在上面「模板库」选一个模板文件夹，"
+                                                        "或点「📋 粘贴模板」"))
+        elif not seen_any:
+            self.tpl_tree.insert("", "end",
+                                 values=("（模板文件夹里没有 .md）", "换个目录，或点「📋 粘贴模板」"))
+
+    def refresh_tpl_lib(self):
+        """④页「模板库」行：回显当前生效的模板库（找不到/没模板时标红）+ 候选下拉。"""
+        if not hasattr(self, "tpl_lib_combo"):
+            return
+        td = core.templates_dir(self.cfg)
+        if td is None:
+            self.tpl_lib_var.set("（没有找到模板库，请点「📂 浏览…」选一个目录）")
+            try:
+                self.tpl_lib_label.configure(foreground="#b00020")
+            except Exception:
+                pass
+        else:
+            try:
+                count = len(list(core.list_template_files(td)))
+            except Exception:
+                count = 0
+            self.tpl_lib_var.set(f"{td}（{count} 个模板）")
+            try:
+                self.tpl_lib_label.configure(foreground="#b00020" if not count else "#0a7d32")
+            except Exception:
+                pass
+        try:
+            cands = core.find_template_dirs(self.cfg)
+        except Exception:
+            cands = []
+        self._tpl_lib_cands = cands
+        self.tpl_lib_combo["values"] = cands
+        self.tpl_lib_combo.set(str(td) if td else "")
+
+    def _apply_tpl_lib(self, path: str):
+        """设置模板库（空串 = 恢复默认：知识库自带 → 上级共用）。"""
+        r = core.set_templates_dir(self.cfg, path, save=True)
+        if not r.get("ok"):
+            for line in (r.get("report") or ["模板库设置失败"]):
+                self.log(self._default_log(), "✗ " + str(line), "err")
+            self.set_status("模板库设置失败（详情见日志）", err=True)
+            return
+        self.refresh_template_tree()                     # 回显、模板清单、模板指向表一起刷新
+        self.set_status(f"模板库：{r.get('path') or '（已恢复默认：自动向上查找）'}"
+                        f"（{r.get('count') or 0} 个模板）")
+
+    def _on_tpl_lib_picked(self, _e=None):
+        self._apply_tpl_lib(self.tpl_lib_combo.get().strip())
+
+    def browse_tpl_lib(self):
+        p = filedialog.askdirectory(title="选择模板库目录（放 .md 模板的文件夹）")
+        if p:
+            self._apply_tpl_lib(p)
+
+    def reset_tpl_lib(self):
+        self._apply_tpl_lib("")
+
+    def _template_name_choices(self) -> list:
+        """模板名候选：**只用用户提供的模板**（选定文件夹 / 粘贴目录 / 库内 Templates），可手输。"""
+        names = []
+        td = core.templates_dir(self.cfg)
+        if td:
+            try:
+                names += [p.name for p in sorted(core.list_template_files(td))]
+            except Exception:
+                pass
+        for sd in core.template_sources(self.cfg):
+            try:
+                names += [f.name for f in core.list_template_files(sd)]
+            except Exception:
+                pass
+        return list(dict.fromkeys(names)) or ["通用.md"]
+
+    def refresh_tpl_map(self):
+        """④页「每个类型用哪个模板」表：跟着当前知识库与类型映射刷新。"""
+        if not hasattr(self, "tpl_map_tree"):
+            return
+        for i in self.tpl_map_tree.get_children():
+            self.tpl_map_tree.delete(i)
+        self._tpl_name_choices = self._template_name_choices()
+        td = core.templates_dir(self.cfg)
+        routes = self.cfg.get("template_routes") or {}
+        for t in sorted((self.cfg.get("routes") or {}).keys()):
+            tpl = str(routes.get(t) or "通用.md")
+            exists = bool(td and (td / tpl).is_file())
+            note = "✓ 仓库里有这个模板" if exists else "仓库里暂无 —— 写入时会自动补/或点上面「补齐缺失」"
+            self.tpl_map_tree.insert("", "end", iid=t, values=(t, tpl, note))
+
+    def _on_tpl_map_double(self, event):
+        """双击「模板文件」单元格就地改这个类型的模板指向（改完即存）。"""
+        tree = self.tpl_map_tree
+        if tree.identify_region(event.x, event.y) != "cell":
+            return
+        if tree.identify_column(event.x) != "#2":
+            return
+        row = tree.identify_row(event.y)
+        if not row:
+            return
+        vals = tree.item(row, "values")
+        if not vals:
+            return
+        t, cur = str(vals[0]), str(vals[1])
+        bbox = tree.bbox(row, "#2")
+        if not bbox or not bbox[2]:
+            return
+        x, y, w, h = bbox
+        ed = ttk.Combobox(tree, values=list(getattr(self, "_tpl_name_choices", ["通用.md"])),
+                          state="normal")
+        ed.set(cur)
+        ed.place(x=x, y=y, width=w, height=h)
+        ed.focus_set()
+        done = {"closed": False}
+
+        def commit(_e=None):
+            if done["closed"]:
+                return
+            done["closed"] = True
+            new = ed.get().strip()
+            try:
+                ed.destroy()
+            except Exception:
+                pass
+            if not new:
+                new = "通用.md"
+            if not new.lower().endswith(".md"):
+                new += ".md"
+            if new == cur:
+                self.set_status(f"未修改：{t} → {cur}")
+                return
+            self.cfg.setdefault("template_routes", {})[t] = new
+            self.refresh_tpl_map()
+            self.refresh_map_rows()
+            self._persist(f"模板指向：{t} → {new}")
+
+        def cancel(_e=None):
+            if done["closed"]:
+                return
+            done["closed"] = True
+            try:
+                ed.destroy()
+            except Exception:
+                pass
+            self.set_status("已取消编辑")
+        ed.bind("<<ComboboxSelected>>", commit)
+        ed.bind("<Return>", commit)
+        ed.bind("<FocusOut>", commit)
+        ed.bind("<Escape>", cancel)
+
+    def do_paste_template(self):
+        """把用户粘贴的模板存到 <程序目录>/_模板/<类型名>.md（不写用户的模板文件夹/知识库）。"""
+        win = tk.Toplevel(self.root)
+        win.title("📋 粘贴模板")
+        win.transient(self.root)
+        win.grab_set()
+        try:
+            win.geometry("760x520")
+        except Exception:
+            pass
+        ttk.Label(win, foreground="#444", justify="left",
+                  text="把模板正文粘到下面（Templater 模板或普通 Markdown 都行），填好类型名后保存。\n"
+                       "保存位置：程序目录的 _模板\\<类型名>.md（不写你的知识库、不写你的模板文件夹）。"
+                  ).pack(anchor="w", padx=10, pady=(8, 4))
+        f = ttk.Frame(win)
+        f.pack(fill="x", padx=10)
+        ttk.Label(f, text="类型名：").pack(side="left")
+        type_var = tk.StringVar(value=(self.map_type_var.get().strip() if hasattr(self, "map_type_var") else ""))
+        ttk.Combobox(f, textvariable=type_var, width=20,
+                     values=list((self.cfg.get("routes") or {}).keys())).pack(side="left", padx=4)
+        txt = tk.Text(win, wrap="none", height=16, font=("Consolas", 10))
+        vsb = ttk.Scrollbar(win, orient="vertical", command=txt.yview)
+        txt.configure(yscrollcommand=vsb.set)
+        txt.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=6)
+        vsb.pack(side="right", fill="y", pady=6)
+        seen = core.list_pasted_templates()
+        if seen:
+            ttk.Label(win, foreground="#666",
+                      text="已保存过的类型：" + "、".join(sorted(seen))).pack(anchor="w", padx=10)
+
+        def on_save():
+            t = type_var.get().strip()
+            r = core.save_pasted_template(self.cfg, t, txt.get("1.0", "end"))
+            for line in (r.get("report") or []):
+                self.log(self._default_log(), ("✓ " if r.get("ok") else "✗ ") + str(line),
+                         "ok" if r.get("ok") else "err")
+            if r.get("ok"):
+                self.set_status(f"已保存模板：{r['path']}")
+                self.refresh_template_tree()
+                try:
+                    win.destroy()
+                except Exception:
+                    pass
+            else:
+                self.set_status("模板保存失败：" + "；".join(r.get("report") or []), err=True)
+
+        bar = ttk.Frame(win)
+        bar.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Button(bar, text="💾 保存到程序目录 _模板\\", command=on_save).pack(side="left")
+        ttk.Button(bar, text="取消", command=lambda: win.destroy()).pack(side="left", padx=6)
+
+    def materialize_missing_templates(self):
+        """把程序内置模板里**仓库还缺的**补进当前知识库的 Templates（模板）/（只补缺失，不覆盖）。"""
+        td = core.templates_dir(self.cfg)
+        if not td:
+            if core.resolve_kb(self.cfg) is None:
+                self.set_status("请先设置知识库目录（①页）", err=True)
+                return
+            td = core.ensure_templates_dir(self.cfg, create=True)
+        if not td:
+            self.set_status("模板目录不可用：请先在①页确认知识库目录", err=True)
+            return
+
+        def work():
+            return core.materialize_templates(td, overwrite=False)
+
+        self.run_task(work, self._on_materialize_done, "补齐缺失模板",
+                      busy=(getattr(self, "btn_tpl_fill", None),))
+
+    def _on_materialize_done(self, r):
+        r = self._on_result(self._default_log(), r, "补齐模板失败：")
+        if r is None:
+            return
+        log = self._default_log()
+        created = list(r.get("created") or [])
+        skipped = list(r.get("skipped") or [])
+        self.log(log, f"✓ 模板目录：{r.get('path')}", "ok")
+        self.log(log, f"   新增 {len(created)} 个、跳过（已存在，未覆盖）{len(skipped)} 个", "info")
+        for n in created[:15]:
+            self.log(log, f"   ＋ {n}", "info")
+        self.refresh_template_tree()
+        self.set_status(f"已补齐缺失模板：新增 {len(created)} 个、跳过 {len(skipped)} 个（不覆盖已有）")
+
+    def open_tpl_dir(self):
+        td = core.templates_dir(self.cfg)
+        if not td:
+            self.set_status("模板目录不存在：先初始化默认模板（会创建 <知识库>/Templates（模板））", err=True)
+            return
+        if self._open_dir(td):
+            self.set_status(f"已打开模板目录：{td}")
+        else:
+            self.set_status(f"打开模板目录失败（可手动复制路径：{td}）", err=True)
+
+    def import_templates(self):
+        """从仓库 Templates（模板）/*.md 更新程序内置模板（templates.py）。"""
+        if core.resolve_kb(self.cfg) is None:
+            self.set_status("请先设置知识库目录", err=True)
+            return
+
+        def work():
+            return core.import_templates_from_vault(self.cfg)
+
+        self.run_task(work, self._on_import_templates_done, "从仓库更新程序模板",
+                      busy=(self.btn_tpl_paste,))
+
+    def _on_import_templates_done(self, r):
+        r = self._on_result(self._default_log(), r, "从仓库更新程序模板失败：")
+        if r is None:
+            return
+        log = self._default_log()
+        for line in r.get("report") or []:
+            self.log(log, "✓ " + line, "ok")
+        for n in (r.get("updated") or [])[:12]:
+            self.log(log, f"   ↑ 已更新 {n}.md", "info")
+        for n in (r.get("kept") or [])[:12]:
+            self.log(log, f"   = 仓库没有，保留程序版 {n}.md", "info")
+        self.log(log, f"   已写入 {r.get('path')}（打包版需重新打包 exe 才永久生效）", "info")
+        self.refresh_all()
+        self.set_status(f"已从仓库更新程序模板：变化 {len(r.get('updated') or [])} 个、"
+                        f"保留程序版 {len(r.get('kept') or [])} 个")
+
+    def init_templates(self):
+        if core.resolve_kb(self.cfg) is None:
+            self.set_status("请先设置知识库目录", err=True)
+            return
+
+        def work():
+            return core.sync_templates(self.cfg, overwrite=True, backup=True)
+
+        self.run_task(work, self._on_init_templates_done, "覆盖仓库模板", busy=(self.btn_tpl_paste,))
+
+    def show_backups(self):
+        """备份情况：统一备份目录 _备份/ 的占用与说明。"""
+        log = self._default_log()
+        s = core.backup_summary()
+        self.log(log, f"备份目录：{s.get('root')}", "ok")
+        for kind in ("模板", "笔记", "快照"):
+            d = s.get(kind) or {}
+            self.log(log, f"   {kind}/：{d.get('files', 0)} 个文件，{d.get('mb', 0)} MB", "info")
+        self.log(log, f"   规则：模板/笔记每个文件只留最新一份；快照只保留最近 {core.BACKUP_KEEP_SNAPSHOTS} 份", "info")
+        self.log(log, f"   恢复：把 {core.BACKUP_DIR_NAME}/笔记/<目录>/<文件>.md 拷回知识库同路径即可", "info")
+        self.log(log, f"   整理旧备份：py _整理备份.py（预览）→ py _整理备份.py --apply", "info")
+        if self._open_dir(core.backup_root(create=False)):
+            self.set_status("已打开备份目录")
+        else:
+            self.set_status(f"备份目录：{s.get('root')}")
+
+    def _on_init_templates_done(self, r):
+        r = self._on_result(self._default_log(), r, "模板同步失败：")
+        if r is None:
+            return
+        log = self._default_log()
+        self.log(log, f"✓ 模板目录：{r.get('path')}", "ok")
+        for n in r.get("created") or []:
+            self.log(log, f"   + 新建 {n}", "info")
+        for n in r.get("updated") or []:
+            self.log(log, f"   ↑ 更新 {n}（旧版已备份）", "info")
+        for n in r.get("kept") or []:
+            self.log(log, f"   = 已是最新，跳过 {n}", "info")
+        self.refresh_all()
+        self.set_status(f"模板同步完成：新建 {len(r.get('created') or [])} 个、"
+                        f"更新 {len(r.get('updated') or [])} 个、"
+                        f"已最新 {len(r.get('kept') or [])} 个")
+
+    # ------------------------------------------------------------------
+    # Tab5 索引与统计
+    # ------------------------------------------------------------------
+
+    def _build_index_tab(self, nb):
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="⑤ 索引与统计")
+
+        f1 = ttk.Frame(tab)
+        f1.pack(fill="x", padx=8, pady=6)
+        self.btn_index = ttk.Button(f1, text="重建索引（各目录 索引.md + 总索引）", command=self.do_build_index)
+        self.btn_index.pack(side="left", padx=4)
+        self.btn_stats = ttk.Button(f1, text="统计知识库", command=self.do_stats)
+        self.btn_stats.pack(side="left", padx=4)
+
+        f1b = ttk.Frame(tab)
+        f1b.pack(fill="x", padx=8, pady=(0, 4))
+        self.btn_link_all = ttk.Button(f1b, text="🔗 全库补双链（预览）",
+                                       command=self.do_link_all_preview)
+        self.btn_link_all.pack(side="left", padx=4)
+        self.btn_link_all_write = ttk.Button(f1b, text="🔗 全库补双链（写入）",
+                                             command=self.do_link_all_write)
+        self.btn_link_all_write.pack(side="left", padx=4)
+        ttk.Label(f1b, text="给全库正文里出现的词条名补 [[双链]]（本地计算，不联网；"
+                            "预览不写盘，写入前逐篇自动备份）",
+                  foreground="#666").pack(side="left", padx=8)
+
+        tip = ("索引为自动生成：重建后覆盖同名文件；不会改动你的任何正式笔记。\n"
+               "总索引写入 config.json 的 index_file（默认 00 首页/索引.md；00 首页不存在时回退到知识库根）。")
+        ttk.Label(tab, text=tip, foreground="#555").pack(anchor="w", padx=10, pady=2)
+
+        body = ttk.Frame(tab)
+        body.pack(fill="both", expand=True, padx=8, pady=4)
+        self.index_log = tk.Text(body, wrap="none", state="disabled", height=8, bg="#fdfdfd",
+                                 font=("Microsoft YaHei UI", 10))
+        vsb = ttk.Scrollbar(body, orient="vertical", command=self.index_log.yview)
+        hsb = ttk.Scrollbar(body, orient="horizontal", command=self.index_log.xview)
+        self.index_log.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        self.index_log.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+        body.rowconfigure(0, weight=1)
+        body.columnconfigure(0, weight=1)
+        self.index_log.tag_configure("info", foreground="#222")
+        self.index_log.tag_configure("ok", foreground="#0a7d32")
+        self.index_log.tag_configure("err", foreground="#b00020")
+
+        bar = ttk.Frame(tab)
+        bar.pack(fill="x", padx=8)
+        ttk.Button(bar, text="复制日志", command=lambda: self.copy_log(self.index_log)).pack(side="left", padx=2)
+        ttk.Button(bar, text="清空日志", command=lambda: self.clear_log(self.index_log)).pack(side="left", padx=2)
+
+        self.stat_tree = ttk.Treeview(tab, columns=("name", "role", "md"), show="headings", height=8)
+        self.stat_tree.heading("name", text="目录")
+        self.stat_tree.heading("role", text="角色")
+        self.stat_tree.heading("md", text="MD 数")
+        self.stat_tree.column("name", width=380, anchor="w")
+        self.stat_tree.column("role", width=120, anchor="w")
+        self.stat_tree.column("md", width=80, anchor="e")
+        self.stat_tree.pack(fill="both", expand=True, padx=8, pady=4)
+
+    def do_build_index(self):
+        def work():
+            return core.build_index(self.cfg)
+
+        self.run_task(work, self._on_index_done, "重建索引", busy=(self.btn_index,))
+
+    # ---- 全库补正文双链（⑤ 页）----
+
+    def do_link_all_preview(self):
+        self._do_link_all(dry_run=True)
+
+    def do_link_all_write(self):
+        self._do_link_all(dry_run=False)
+
+    def _do_link_all(self, dry_run: bool):
+        """全库补双链：dry_run=True 只统计；False 才逐篇写盘（core 会先备份）。"""
+        cfg = self.cfg
+
+        def work():
+            return core.link_keywords_batch(cfg, dry_run=dry_run)
+
+        desc = "🔗 全库补双链（预览）" if dry_run else "🔗 全库补双链（写入）"
+        self.run_task(work, lambda r: self._on_link_all_done(r, dry_run=dry_run), desc,
+                      busy=(self.btn_link_all, self.btn_link_all_write))
+
+    def _on_link_all_done(self, r, dry_run: bool):
+        r = self._on_result(self.index_log, r, "全库补双链失败：")
+        if r is None:
+            return
+        if not r.get("ok"):
+            detail = "；".join(str(x) for x in (r.get("report") or ["全库补双链未能完成"]))
+            self.log(self.index_log, f"✗ {detail}", "err")
+            self.set_status(f"{detail}（详情见日志区）", err=True)
+            return
+        details = r.get("details") or []
+        for line in r.get("report") or []:
+            self.log(self.index_log, "✓ " + str(line), "ok")
+        self.log(self.index_log, f"   检查 {r.get('files')} 篇 → {'可补' if dry_run else '已补'} "
+                                 f"{r.get('changed')} 篇、共 {r.get('links')} 个链接"
+                                 f"（候选词条 {r.get('index')} 个）", "info")
+        for d in details[:15]:
+            self.log(self.index_log,
+                     f"   · {d.get('dir')}/{d.get('title')}.md → {len(d.get('added') or [])} 个", "info")
+        if len(details) > 15:
+            self.log(self.index_log, f"   …（其余 {len(details) - 15} 篇略）", "info")
+        if not details:
+            self.log(self.index_log, "   （没有可补的词条双链）", "info")
+        if dry_run:
+            self.log(self.index_log, "   确认无误再点「🔗 全库补双链（写入）」", "info")
+            self.set_status(f"全库补双链预览：可补 {r.get('changed')} 篇、{r.get('links')} 个链接")
+        else:
+            self.log(self.index_log,
+                     f"   旧版已备份到 {core.BACKUP_DIR_NAME}/笔记/（每个文件只留最新一份）", "info")
+            self.set_status(f"全库补双链完成：{r.get('changed')} 篇、{r.get('links')} 个链接")
+
+    def _on_index_done(self, r):
+        r = self._on_result(self.index_log, r)
+        if r is None:
+            return
+        if not r.get("ok"):
+            detail = "；".join(r.get("report") or ["索引重建失败"])
+            self.log(self.index_log, f"✗ {detail}", "err")
+            self.set_status(f"索引重建失败：{detail}（详情见日志区）", err=True)
+            return
+        self.log(self.index_log, f"✓ 总索引：{r.get('master')}", "ok")
+        n = 0
+        for rep in r.get("report") or []:
+            self.log(self.index_log, "   · " + rep, "info")
+            n += 1
+        self.set_status(f"索引重建完成：总索引 {r.get('master')}（{n} 条明细见日志）")
+
+    def do_stats(self):
+        def work():
+            return core.kb_stats(self.cfg)
+
+        self.run_task(work, self._on_stats_done, "统计", busy=(self.btn_stats,))
+
+    def _on_stats_done(self, r):
+        r = self._on_result(self.index_log, r)
+        if r is None:
+            return
+        for i in self.stat_tree.get_children():
+            self.stat_tree.delete(i)
+        if not r.get("ok"):
+            self.log(self.index_log, "✗ 知识库未设置", "err")
+            self.set_status("统计失败：知识库未设置（详情见日志区）", err=True)
+            return
+        for name, role, n in r.get("rows") or []:
+            self.stat_tree.insert("", "end", values=(name, role, n))
+        self.log(self.index_log, f"✓ 知识库：{r.get('root')}", "ok")
+        self.log(self.index_log, f"  内容目录笔记：{r.get('content_total')}｜全部 .md（含模板/索引）：{r.get('total')}", "info")
+        self.set_status(f"统计完成：内容目录 {r.get('content_total')} 个笔记，全部 .md {r.get('total')} 个")
+
+    # ------------------------------------------------------------------
+    # Tab6 手动生成笔记
+    # ------------------------------------------------------------------
+
+    def _build_manual_tab(self, nb):
+        self.MAN_AUTO_TYPE = "（自动识别）"          # 类型下拉的"自动"项
+        self._man_filling = False                    # 正在自动回填（别当成用户手改）
+        self._man_user_title = False                 # 用户手改过标题
+        self._man_user_type = False                  # 用户手改过类型
+        self.MD_LEVEL_AUTO = "自动"                   # md 批量建库：标题级别下拉的"自动"项
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="⑥ 整段粘贴导入")
+
+        tip = ("把整段内容粘进下面的框（从 ChatGPT / 网页复制的 Markdown 都行：标题、表格、图片、长文不限）→ 点「🔎 识别并预览」。\n"
+               "程序会：① 从**首行**认类型（如「人物：曾纪泽」「[事件] 七七事变」「# 曾纪泽（人物）」），认不出来就按各模板小节命中数打分；"
+               "② 自动取标题；③ 套对应模板、把 ## 小节对齐到模板的 emoji 章节（模板里没有的小节原样保留）；"
+               "④ 按「② 类型映射」分发到对应目录（已存在则增量更新，只填空）。\n"
+               "识别出的类型/标题会回填到下面，可自行修改——改过就以你填的为准；正文里的图片会存进 Assets（图片地图）。"
+               "快捷键：Ctrl+回车 = 识别并预览，Ctrl+Shift+回车 = 写入知识库。")
+        ttk.Label(tab, text=tip, foreground="#555", wraplength=1150, justify="left").pack(anchor="w", padx=10, pady=2)
+
+        # 识别结果（识别后自动回填，可改）
+        f0 = ttk.Frame(tab)
+        f0.pack(fill="x", padx=8, pady=4)
+        ttk.Label(f0, text="类型：").grid(row=0, column=0, sticky="w")
+        self.man_type_var = tk.StringVar()
+        self.man_type_combo = ttk.Combobox(f0, textvariable=self.man_type_var, state="readonly", width=14)
+        self.man_type_combo.grid(row=0, column=1, padx=2)
+        ttk.Label(f0, text="标题：").grid(row=0, column=2, sticky="w")
+        self.man_title_var = tk.StringVar()
+        ttk.Entry(f0, textvariable=self.man_title_var, width=34).grid(row=0, column=3, padx=2)
+        ttk.Label(f0, text="摘要：").grid(row=0, column=4, sticky="w")
+        self.man_summary_var = tk.StringVar()
+        ttk.Entry(f0, textvariable=self.man_summary_var, width=38).grid(row=0, column=5, padx=2)
+        self.man_why_var = tk.StringVar(value="类型：待识别（粘贴内容后点「🔎 识别并预览」）")
+        ttk.Label(f0, textvariable=self.man_why_var, foreground="#0b3d91").grid(
+            row=1, column=0, columnspan=6, sticky="w", padx=2, pady=(2, 0))
+
+        # 查重行：知识库里是否已有这篇词条（有则补充整合，不重建）
+        f0b = ttk.Frame(tab)
+        f0b.pack(fill="x", padx=8, pady=(0, 2))
+        self.btn_man_find = ttk.Button(f0b, text="🔍 查重（看是否已有这篇）", command=self.do_manual_find)
+        self.btn_man_find.pack(side="left", padx=4)
+        ttk.Label(f0b, text="写入方式：").pack(side="left", padx=(10, 2))
+        self.man_mode_var = tk.StringVar(value="自动（已有则补充更新）")
+        ttk.Combobox(f0b, textvariable=self.man_mode_var, state="readonly", width=20,
+                     values=("自动（已有则补充更新）", "只新建（不动已有）",
+                             "只补充已有（没有就跳过）")).pack(side="left")
+        self.btn_man_open_note = ttk.Button(f0b, text="打开该条目",
+                                            command=self.open_found_note, state="disabled")
+        self.btn_man_open_note.pack(side="left", padx=8)
+        self.man_find_var = tk.StringVar(value="查重：未检查")
+        ttk.Label(f0b, textvariable=self.man_find_var, foreground="#7a3b00").pack(side="left", padx=8)
+
+        # 操作区（放在粘贴框上方：窗口再矮也不会点不到按钮）
+        f2 = ttk.Frame(tab)
+        f2.pack(fill="x", padx=8, pady=4)
+        self.btn_man_preview = ttk.Button(f2, text="🔎 识别并预览", command=self.do_manual_preview)
+        self.btn_man_preview.pack(side="left", padx=4)
+        self.btn_man_write = ttk.Button(f2, text="✅ 写入知识库", command=self.do_manual_write)
+        self.btn_man_write.pack(side="left", padx=4)
+        ttk.Button(f2, text="🧹 清空输入", command=self.do_manual_clear).pack(side="left", padx=4)
+        self.btn_man_open = ttk.Button(f2, text="打开所在文件夹", command=self.open_last_dir, state="disabled")
+        self.btn_man_open.pack(side="left", padx=10)
+        ttk.Label(f2, text="Ctrl+回车 = 识别并预览　Ctrl+Shift+回车 = 写入",
+                  foreground="#666").pack(side="left", padx=8)
+        ttk.Button(f2, text="复制日志", command=lambda: self.copy_log(self.man_log)).pack(side="right", padx=2)
+        ttk.Button(f2, text="清空日志", command=lambda: self.clear_log(self.man_log)).pack(side="right", padx=2)
+
+        # 配图一行：手动取图（本地图库 → 维基百科）+ 写入时是否自动带本地图
+        f2b = ttk.Frame(tab)
+        f2b.pack(fill="x", padx=8, pady=(0, 2))
+        self.btn_man_image = ttk.Button(f2b, text="🖼 配图", command=self.do_manual_acquire_image)
+        self.btn_man_image.pack(side="left", padx=4)
+        self.man_auto_img_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(f2b, text="写入时自动带本地配图（联网取图只在点「🖼 配图」时发生）",
+                        variable=self.man_auto_img_var).pack(side="left", padx=6)
+        self.man_img_state_var = tk.StringVar(value="配图：未选（勾选左侧可自动带本地图库的图）")
+        ttk.Label(f2b, textvariable=self.man_img_state_var, foreground="#0b3d91").pack(side="left", padx=8)
+
+        # 图片下载一行
+        f2c = ttk.Frame(tab)
+        f2c.pack(fill="x", padx=8, pady=(0, 4))
+        self.man_dl_img_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(f2c, text="自动下载正文里的网络图片到 Assets（图片地图）",
+                        variable=self.man_dl_img_var).pack(side="left", padx=4)
+        ttk.Label(f2c, text="图片会存进 Assets（图片地图）/，正文里改写成 ![[文件名]]（识别并预览时也会下载；下载失败只记日志、原链接保留）",
+                  foreground="#666").pack(side="left", padx=8)
+        for _var in (self.man_title_var, self.man_type_var):   # 标题/类型一变，已选配图作废
+            try:
+                _var.trace_add("write", self._on_manual_key_changed)
+            except Exception:
+                pass
+
+        # 大粘贴框（整段内容）+ 可选附加字段
+        f1 = ttk.PanedWindow(tab, orient="horizontal")
+        f1.pack(fill="both", expand=True, padx=8, pady=4)
+        lf = ttk.LabelFrame(f1, text="粘贴内容（Markdown 原文，长度不限；标题/表格/图片都能进来）")
+        f1.add(lf, weight=4)
+        self.man_content = tk.Text(lf, wrap="word", bg="#ffffff", font=("Microsoft YaHei UI", 11),
+                                   undo=True, height=5)
+        sb = ttk.Scrollbar(lf, command=self.man_content.yview)
+        self.man_content.configure(yscrollcommand=sb.set)
+        self.man_content.pack(side="left", fill="both", expand=True, padx=4, pady=4)
+        sb.pack(side="right", fill="y")
+        self.man_content.bind("<Control-Return>", self._on_manual_ctrl_enter)
+        self.man_content.bind("<Control-Shift-Return>", self._on_manual_ctrl_shift_enter)
+        self.man_content.bind("<<Modified>>", self._on_manual_content_modified)
+
+        rf = ttk.LabelFrame(f1, text="附加 frontmatter 字段（键: 值，每行一个；一般不用填——粘贴内容里有 frontmatter 会自动识别）")
+        f1.add(rf, weight=1)
+        self.man_fm = tk.Text(rf, wrap="word", bg="#ffffff", font=("Microsoft YaHei UI", 10), height=8)
+        self.man_fm.pack(fill="both", expand=True, padx=4, pady=4)
+
+        # 📄 从 md 文档批量建库（拆词条 → 判类型 → 套模板 → 存对应目录）
+        fmd = ttk.LabelFrame(tab, text="📄 从 md 文档批量建库")
+        fmd.pack(fill="x", padx=8, pady=(2, 4))
+        ttk.Label(fmd, foreground="#555", wraplength=1150, justify="left",
+                  text="选一个 .md → 按标题拆成多个词条 → 自动判类型、套规范模板、缺目录自动创建 → "
+                       "存到对应目录（已存在只补空缺）；词条里写「类型: 战役」可自带类型。").pack(
+            anchor="w", padx=4, pady=(3, 0))
+        fmd1 = ttk.Frame(fmd)
+        fmd1.pack(fill="x", padx=4, pady=(2, 4))
+        self.btn_md_pick = ttk.Button(fmd1, text="📂 选择 md 文件…", command=self.do_md_pick)
+        self.btn_md_pick.pack(side="left", padx=(0, 6))
+        self.md_file_var = tk.StringVar(value="（还没选文件）")
+        ttk.Entry(fmd1, textvariable=self.md_file_var, width=28, state="readonly").pack(
+            side="left", padx=(0, 10))
+        ttk.Label(fmd1, text="标题级别：").pack(side="left")
+        self.md_level_var = tk.StringVar(value=self.MD_LEVEL_AUTO)
+        ttk.Combobox(fmd1, textvariable=self.md_level_var, state="readonly", width=9,
+                     values=(self.MD_LEVEL_AUTO, "1（#）", "2（##）", "3（###）",
+                             "4（####）")).pack(side="left", padx=2)
+        ttk.Label(fmd1, text="默认类型：").pack(side="left", padx=(10, 0))
+        self.md_type_var = tk.StringVar(value=self.MAN_AUTO_TYPE)
+        self.md_type_combo = ttk.Combobox(fmd1, textvariable=self.md_type_var, state="readonly",
+                                          width=12, values=[self.MAN_AUTO_TYPE])
+        self.md_type_combo.pack(side="left", padx=2)
+        self.md_dl_img_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(fmd1, text="顺带下载网络图片到 Assets",
+                        variable=self.md_dl_img_var).pack(side="left", padx=8)
+        self.btn_md_preview = ttk.Button(fmd1, text="🔍 预览（看会建哪些词条）",
+                                         command=self.do_md_preview)
+        self.btn_md_preview.pack(side="left", padx=(8, 4))
+        self.btn_md_create = ttk.Button(fmd1, text="✅ 批量创建（先备份）",
+                                        command=self.do_md_create)
+        self.btn_md_create.pack(side="left", padx=4)
+
+        fmd2 = ttk.Frame(fmd)
+        fmd2.pack(fill="x", padx=4, pady=(0, 4))
+        cols = ("name", "type", "dir", "chars")
+        self.md_tree = ttk.Treeview(fmd2, columns=cols, show="headings", height=5)
+        for col, title, width, stretch in (("name", "词条名", 420, True),
+                                           ("type", "类型", 90, False),
+                                           ("dir", "目标目录", 300, False),
+                                           ("chars", "正文字数", 90, False)):
+            self.md_tree.heading(col, text=title)
+            self.md_tree.column(col, width=width, anchor="w", stretch=stretch)
+        vsbm = ttk.Scrollbar(fmd2, orient="vertical", command=self.md_tree.yview)
+        self.md_tree.configure(yscrollcommand=vsbm.set)
+        self.md_tree.pack(side="left", fill="both", expand=True)
+        vsbm.pack(side="right", fill="y")
+        self._md_path = ""
+        self._md_rows = {}
+        self._md_entries = []
+
+        # 日志 / 预览（窗口变大时空间优先给它）
+        body = ttk.Frame(tab)
+        body.pack(fill="both", expand=True, padx=8, pady=4)
+        self.man_log = tk.Text(body, wrap="none", state="disabled", height=5, bg="#fdfdfd",
+                               font=("Microsoft YaHei UI", 10))
+        vsb = ttk.Scrollbar(body, orient="vertical", command=self.man_log.yview)
+        hsb = ttk.Scrollbar(body, orient="horizontal", command=self.man_log.xview)
+        self.man_log.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        self.man_log.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+        body.rowconfigure(0, weight=1)
+        body.columnconfigure(0, weight=1)
+        self.man_log.tag_configure("info", foreground="#222")
+        self.man_log.tag_configure("ok", foreground="#0a7d32")
+        self.man_log.tag_configure("err", foreground="#b00020")
+        self.man_log.tag_configure("head", foreground="#0b3d91", font=("Microsoft YaHei UI", 12, "bold"))
+
+        self.refresh_manual_types()
+
+    def refresh_manual_types(self):
+        if not hasattr(self, "man_type_combo"):
+            return
+        auto = getattr(self, "MAN_AUTO_TYPE", "（自动识别）")
+        vals = [auto] + sorted((self.cfg.get("routes") or {}).keys())
+        self.man_type_combo["values"] = vals
+        combo = getattr(self, "md_type_combo", None)     # 📄 md 批量建库 的类型下拉跟着 ② 页刷新
+        var = getattr(self, "md_type_var", None)
+        if combo is not None and var is not None:
+            try:
+                combo["values"] = vals
+                if var.get() not in vals:
+                    var.set(auto)
+            except Exception:
+                pass
+        if self.man_type_var.get() not in vals:
+            self._man_filling = True
+            try:
+                self.man_type_var.set(auto)
+            finally:
+                self._man_filling = False
+
+    # ---------------- 粘贴导入：取值 / 回填 / 失效 ----------------
+
+    def _manual_payload(self) -> str:
+        """粘贴框内容（若填了附加字段，则并入 frontmatter）。"""
+        text = self.man_content.get("1.0", "end").strip()
+        extra = self.man_fm.get("1.0", "end").strip()
+        if not extra:
+            return text
+        if text.startswith("---"):
+            end = text.find("\n---", 3)
+            if end > 0:
+                return text[:end] + "\n" + extra + text[end:]
+        return "---\n" + extra + "\n---\n\n" + text
+
+    def _manual_type_override(self) -> str:
+        t = self.man_type_var.get().strip()
+        return "" if t in ("", getattr(self, "MAN_AUTO_TYPE", "")) else t
+
+    def _manual_title_override(self) -> str:
+        """标题框为空 → 交回给程序自动识别（别把 sanitize_title 的「未命名」当标题传下去）。"""
+        raw = self.man_title_var.get().strip()
+        return core.sanitize_title(raw) if raw else ""
+
+    def _manual_download_images(self) -> bool:
+        return bool(self.man_dl_img_var.get()) if hasattr(self, "man_dl_img_var") else True
+
+    def _fill_manual_recognition(self, type_, title, why, note):
+        """把识别结果回填到界面（不触发「用户手改」判定）。"""
+        self._man_filling = True
+        try:
+            if type_:
+                self.man_type_var.set(str(type_))
+            if title:
+                self.man_title_var.set(str(title))
+            bits = []
+            if why:
+                bits.append(f"类型判定：{why}")
+            if note:
+                bits.append(f"模板：{note}")
+            self.man_why_var.set("　｜　".join(bits) or "类型：已识别")
+        finally:
+            self._man_filling = False
+        self._man_user_title = False
+        self._man_user_type = False
+
+    def _on_manual_ctrl_enter(self, _e=None):
+        self.do_manual_preview()
+        return "break"
+
+    def _on_manual_ctrl_shift_enter(self, _e=None):
+        self.do_manual_write()
+        return "break"
+
+    def _on_manual_content_modified(self, _e=None):
+        """粘贴/编辑内容后：作废上一次识别结果（下次预览重新识别）。"""
+        try:
+            if not self.man_content.edit_modified():
+                return
+            self.man_content.edit_modified(False)
+        except Exception:
+            pass
+        if getattr(self, "_man_filling", False):
+            return
+        if self._man_user_title and self._man_user_type:
+            return                                     # 用户自己填的类型+标题：不动
+        self._man_filling = True
+        try:
+            if not self._man_user_title:
+                self.man_title_var.set("")
+            if not self._man_user_type:
+                self.man_type_var.set(getattr(self, "MAN_AUTO_TYPE", ""))
+            self.man_why_var.set("类型：待识别（内容已变化，请重新点「🔎 识别并预览」）")
+        finally:
+            self._man_filling = False
+        self._man_user_title = self._man_user_type = False
+        if self._man_images:
+            self._man_images = []
+            self._set_img_state(getattr(self, "man_img_state_var", None),
+                                "配图：未选（内容已改，请重新配图）")
+        self._man_previewed = False
+
+    def _on_manual_key_changed(self, *_a):
+        """⑥ 页标题/类型被改：记住「用户手改过」，并让已选配图作废（避免张冠李戴）。"""
+        if getattr(self, "_man_filling", False):
+            return                                     # 自动回填，不算用户手改
+        auto = getattr(self, "MAN_AUTO_TYPE", "（自动识别）")
+        self._man_user_title = bool(self.man_title_var.get().strip())
+        self._man_user_type = self.man_type_var.get().strip() not in ("", auto)
+        if self._man_images:
+            self._man_images = []
+            self._set_img_state(getattr(self, "man_img_state_var", None),
+                                "配图：未选（标题/类型已改，请重新配图）")
+        self._man_previewed = False
+        if hasattr(self, "man_find_var"):
+            self.man_find_var.set("查重：标题/类型已改，请重新点「🔍 查重」")
+            self._found_note = ""
+            self._set_enabled([getattr(self, "btn_man_open_note", None)], False)
+
+    def do_manual_acquire_image(self):
+        """⑥ 页配图：本地图库优先，其次中文维基百科（联网只在点这个按钮时发生）。"""
+        title = core.sanitize_title(self.man_title_var.get().strip())
+        if not title:
+            self.set_status("请先填「标题」，再点「🖼 配图」", err=True)
+            return
+        self.log(self.man_log, f"▶ 配图：查找「{title}」的图片（本地图库 → 中文维基百科）…", "head")
+
+        def work():
+            return core.acquire_image(self.cfg, title, aliases=(title,), allow_network=True)
+
+        self.run_task(work, self._on_manual_acquire_image_done, "配图",
+                      busy=(getattr(self, "btn_man_image", None), self.btn_man_preview))
+
+    def _on_manual_acquire_image_done(self, r):
+        if isinstance(r, tuple) and r and r[0] == "ERROR":
+            self.log(self.man_log, f"✗ 配图失败：{r[1]}", "err")
+            self.set_status(f"配图失败：{r[1]}（详情见日志区）", err=True)
+            return
+        if not isinstance(r, dict):
+            self.log(self.man_log, "✗ 配图失败：返回结果异常", "err")
+            self.set_status("配图失败：返回结果异常（详情见日志区）", err=True)
+            return
+        if not r.get("ok"):
+            note = str(r.get("note") or "未取得图片")
+            self.log(self.man_log, f"✗ 配图未成功：{note}", "err")
+            self.log(self.man_log, "   → 可手动把图片放进 Assets（图片地图）后重试；标题越规范越容易匹配。", "info")
+            self.set_status(f"配图未成功：{note}", err=True)
+            return
+        entry = self._img_entry(r)
+        self._man_images = [entry]
+        source = str(r.get("source") or "")
+        credit = str(r.get("credit") or "")
+        self.log(self.man_log,
+                 f"✓ 配图：{entry.get('file')}（来源：{source or '未知'}{('／' + credit) if credit else ''}）", "ok")
+        self.log(self.man_log,
+                 f"   路径：{entry.get('path')}（预览/笔记里写 ![[{entry.get('file')}]]）", "info")
+        self._set_img_state(getattr(self, "man_img_state_var", None),
+                            f"配图：{entry.get('file')}（{source or '未知'}）")
+        self.set_status(f"配图完成：{entry.get('path')}")
+        if self._man_previewed:               # 已预览过 → 带新图刷新预览
+            self.do_manual_preview()
+
+    def _manual_mode(self) -> str:
+        """⑥ 页「写入方式」→ core 的 mode。"""
+        v = getattr(self, "man_mode_var", None)
+        text = v.get() if v is not None else ""
+        if text.startswith("只新建"):
+            return "create"
+        if text.startswith("只补充已有"):
+            return "update"
+        return "auto"
+
+    def do_manual_find(self):
+        """查重：知识库里有没有这篇词条（同名 + 相近名），并列出已有小节的填充情况。"""
+        title = (self.man_title_var.get() or "").strip()
+        if not title:
+            body = self._manual_payload()
+            first = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
+            title = core.guess_title_from_text(self.cfg, body) or first
+        if not title:
+            self.set_status("先粘贴内容或填标题，再查重", err=True)
+            return
+        cfg = self.cfg
+        type_ = self._manual_type_override()
+        body = self._manual_payload()
+
+        def work():
+            return {"info": core.find_existing_note(cfg, title, type_),
+                    "title": title,
+                    "guessed": core.guess_title_from_text(cfg, body)}
+
+        self.run_task(work, self._on_manual_find_done, "查重", busy=(self.btn_man_find,))
+
+    def _on_manual_find_done(self, r):
+        r = self._on_result(self.man_log, r)
+        if r is None:
+            return
+        info = r.get("info") or {}
+        log = self.man_log
+        self._found_note = ""
+        matches = info.get("matches") or []
+        if matches:
+            m = matches[0]
+            self._found_note = m.get("path") or ""
+            self.man_find_var.set(f"查重：已存在 → {m.get('dir')}/{m.get('title')}.md"
+                                  f"（{m.get('size_kb')} KB，改于 {m.get('mtime')}）")
+            self.log(log, f"🔍 知识库里已经有这篇：{m.get('dir')}/{m.get('title')}.md", "ok")
+            for s in (m.get("sections") or [])[:12]:
+                tag = "空（可补充）" if not s.get("filled") else f"已有 {s.get('filled')} 行"
+                self.log(log, f"   · {s.get('label')}：{tag}", "info")
+            self.log(log, "   → 点「🔎 识别并预览」看**补充整合后**的完整内容，再「✅ 写入知识库」即可"
+                          "（已有内容不会被覆盖，只填空、只追加缺失小节）", "info")
+        else:
+            self.man_find_var.set("查重：没有同名词条 → 将新建")
+            self.log(log, f"🔍 知识库里没有「{r.get('title')}」这个词条 → 将新建", "ok")
+        sugs = info.get("suggestions") or []
+        if sugs:
+            self.log(log, "   相近名字的词条（可能是同一个，改名可改到这个标题）：", "info")
+            for s in sugs[:8]:
+                self.log(log, f"   · {s.get('dir')}/{s.get('title')}.md", "info")
+        self._set_enabled([getattr(self, "btn_man_open_note", None)], bool(self._found_note))
+        self.set_status(self.man_find_var.get())
+
+    def open_found_note(self):
+        path = getattr(self, "_found_note", "")
+        if not path:
+            self.set_status("还没查到已存在的词条（先点「🔍 查重」）", err=True)
+            return
+        if self._open_dir(path):
+            self.set_status(f"已打开：{path}")
+        else:
+            self.set_status(f"打开失败，可手动打开：{path}", err=True)
+
+    def do_manual_preview(self):
+        """整段粘贴 → 识别类型/标题 → 套模板 → 预览（dry_run，不写盘）。"""
+        text = self._manual_payload()
+        if not text.strip():
+            self.set_status("请先把内容粘贴进「粘贴内容」框", err=True)
+            try:
+                self.man_content.focus_set()
+            except Exception:
+                pass
+            return
+        cfg = self.cfg
+        type_override = self._manual_type_override()
+        title_override = self._manual_title_override()
+        download = self._manual_download_images()
+
+        def work():
+            return core.import_entry_from_text(
+                cfg, text, type_override=type_override, title_override=title_override,
+                download_images=download, mode=self._manual_mode(), dry_run=True)
+
+        self.run_task(work, self._on_manual_preview_done, "识别并预览",
+                      busy=(self.btn_man_preview, self.btn_man_write,
+                            getattr(self, "btn_man_image", None)))
+
+    def _on_manual_preview_done(self, r):
+        r = self._on_result(self.man_log, r)
+        if r is None:
+            return
+        if not r.get("ok"):
+            detail = "；".join(r.get("report") or ["识别失败"])
+            self.log(self.man_log, f"✗ {detail}", "err")
+            self.set_status(f"{detail}（详情见日志区）", err=True)
+            return
+        self._fill_manual_recognition(r.get("type"), r.get("title"), r.get("why"), r.get("note"))
+        action = r.get("action") or "预览"
+        existing = r.get("existing") or {}
+        m = (existing.get("matches") or [{}])[0] if existing.get("matches") else {}
+        if action == "增量预览":
+            self._found_note = m.get("path") or r.get("path") or ""
+            self.man_find_var.set(f"查重：已存在 → {m.get('dir')}/{m.get('title')}.md（本次为补充整合）")
+            self._set_enabled([getattr(self, "btn_man_open_note", None)], bool(self._found_note))
+            head = (f"─── 补充整合预览 → {m.get('dir')}/{m.get('title')}.md "
+                    f"（{r.get('summary')}）───")
+        else:
+            head = f"─── 新建预览（模板：{r.get('note')}）───"
+        self._show_manual_log(r.get("text") or "", r.get("note") or "", head=head)
+        self._man_previewed = True
+        self.log(self.man_log, f"✓ {action}：{r.get('summary')}", "ok")
+        for rep in r.get("report") or []:
+            self.log(self.man_log, "   · " + rep, "info")
+        imgs = r.get("images") or []
+        if imgs:
+            self.log(self.man_log,
+                     f"   🖼 正文图片已入库 {len(imgs)} 张：{'、'.join(str(x) for x in imgs[:6])}", "ok")
+        self.set_status(f"{action}：类型「{r.get('type')}」／标题「{r.get('title')}」——{r.get('summary')}")
+
+    def do_manual_write(self):
+        """整段粘贴 → 识别 → 套模板 → 写入②页映射的对应目录（已存在则增量更新）。"""
+        text = self._manual_payload()
+        if not text.strip():
+            self.set_status("请先把内容粘贴进「粘贴内容」框", err=True)
+            return
+        cfg = self.cfg
+        type_override = self._manual_type_override()
+        title_override = self._manual_title_override()
+        download = self._manual_download_images()
+        manual_images = list(self._man_images)          # 🖼 配图按钮选的图
+
+        def work():
+            r = core.import_entry_from_text(
+                cfg, text, type_override=type_override, title_override=title_override,
+                download_images=download, mode=self._manual_mode(), dry_run=False)
+            if r.get("ok") and manual_images and r.get("path"):
+                from pathlib import Path
+                try:                                     # 把「🖼 配图」选的图插到 H1 之后
+                    p = Path(r["path"])
+                    old = p.read_text(encoding="utf-8")
+                    new_text = core.insert_images(old, manual_images)
+                    if new_text != old:
+                        p.write_text(new_text, encoding="utf-8")
+                        r.setdefault("report", []).append(
+                            "配图：" + "、".join(str(e.get("file")) for e in manual_images))
+                except Exception as exc:                 # 配图失败不影响写入结果
+                    r.setdefault("report", []).append(f"配图写入失败：{type(exc).__name__}: {exc}")
+            return r
+
+        self.run_task(work, self._on_manual_write_done, "写入知识库",
+                      busy=(self.btn_man_write, self.btn_man_preview,
+                            getattr(self, "btn_man_image", None)))
+
+    def _on_manual_write_done(self, r):
+        r = self._on_result(self.man_log, r)
+        if r is None:
+            return
+        if not r.get("ok"):
+            detail = "；".join(r.get("report") or ["写入失败"])
+            self.log(self.man_log, f"✗ 写入失败：{detail}", "err")
+            self.set_status(f"写入失败：{detail}（详情见日志区）", err=True)
+            return
+        path = r.get("path") or ""
+        self._last_write_path = path
+        self._refresh_steps()
+        action = r.get("action") or "写入"
+        head = f"─── 已{action}：{r.get('type') or ''}／{r.get('title') or ''} ───"
+        shown = ""
+        try:                                             # 直接把落盘后的文件显示出来（所见即所得）
+            from pathlib import Path
+            if path and Path(path).is_file():
+                shown = Path(path).read_text(encoding="utf-8")
+        except Exception:
+            shown = ""
+        if shown:
+            self._show_manual_log(shown, "", head=head)
+        self.log(self.man_log, f"✓ 已{action}：{path}", "ok")
+        if r.get("summary"):
+            self.log(self.man_log, f"   本次改动：{r.get('summary')}", "ok")
+        if r.get("why"):
+            self.log(self.man_log, f"   类型判定：{r.get('why')}", "info")
+        for rep in r.get("report") or []:
+            self.log(self.man_log, "   · " + rep, "info")
+        self.log(self.man_log, f"  完整路径：{path}（点「打开所在文件夹」可直接定位）", "info")
+        if action == "增量更新":
+            self.log(self.man_log,
+                     "   （增量更新：只填空、只追加缺失小节；改动前的旧版已备份到 "
+                     f"{core.BACKUP_DIR_NAME}/笔记/）", "info")
+        self.set_status(f"已{action}，完整路径：{path}")
+        self._man_previewed = False
+
+    def _show_manual_log(self, text: str, note: str, head: str = ""):
+        self.man_log.configure(state="normal")
+        self.man_log.delete("1.0", "end")
+        self.man_log.insert("end", (head or f"─── 笔记预览（模板：{note}）───") + "\n", "head")
+        self.man_log.insert("end", text)
+        self._scroll_to_end(self.man_log)       # 自动滚动到底部
+        self.man_log.configure(state="disabled")
+
+    def do_manual_clear(self):
+        self._man_filling = True
+        try:
+            self.man_title_var.set("")
+            self.man_summary_var.set("")
+            self.man_type_var.set(getattr(self, "MAN_AUTO_TYPE", "（自动识别）"))
+            self.man_why_var.set("类型：待识别（粘贴内容后点「🔎 识别并预览」）")
+            if hasattr(self, "man_find_var"):
+                self.man_find_var.set("查重：未检查")
+            self._found_note = ""
+            self._set_enabled([getattr(self, "btn_man_open_note", None)], False)
+        finally:
+            self._man_filling = False
+        self.man_fm.delete("1.0", "end")
+        self.man_content.delete("1.0", "end")
+        try:
+            self.man_content.edit_modified(False)
+        except Exception:
+            pass
+        self._man_images = []
+        self._man_previewed = False
+        self._man_user_title = self._man_user_type = False
+        self._set_img_state(getattr(self, "man_img_state_var", None), "配图：未选")
+        self.clear_log(self.man_log, silent=True)
+        self.set_status("已清空输入")
+
+
+    # ------------------------------------------------------------------
+    # ⑦ 补充更新：把粘贴内容按格式规范对齐，只补充更新「已有」词条（绝不新建）
+    # ------------------------------------------------------------------
+
+    # ---------------- ⑥ 页：从 md 文档批量建库 ----------------
+
+    def do_md_pick(self):
+        """选一个 md 文件（只记住路径并把文件名回显出来，不读内容）。"""
+        try:
+            path = filedialog.askopenfilename(
+                title="选择要拆分成词条的 Markdown 文档",
+                filetypes=[("Markdown", "*.md"), ("文本", "*.txt"), ("所有文件", "*.*")],
+                parent=self.root)
+        except Exception as exc:  # noqa: BLE001
+            self.log(self.man_log, f"✗ 打开文件选择框失败：{type(exc).__name__}: {exc}", "err")
+            return
+        if not path:
+            self.set_status("没有选择文件（可重新点「📂 选择 md 文件…」）")
+            return
+        self._md_path = str(path)
+        self.md_file_var.set(Path(self._md_path).name)
+        self.log(self.man_log, f"📄 已选择文件：{self._md_path}", "head")
+        self._fill_md_table(self._md_plan())
+        self.set_status(f"已选择：{Path(self._md_path).name}"
+                        f"（点「🔍 预览（看会建哪些词条）」）")
+
+    def _md_level(self) -> int:
+        """标题级别下拉 → level（0=自动）。"""
+        v = self.md_level_var.get().strip() if hasattr(self, "md_level_var") else ""
+        m = re.match(r"^(\d)", v or "")
+        return int(m.group(1)) if m else 0
+
+    def _md_default_type(self) -> str:
+        v = self.md_type_var.get().strip() if hasattr(self, "md_type_var") else ""
+        return "" if v == getattr(self, "MAN_AUTO_TYPE", "") else v
+
+    def _md_busy(self) -> tuple:
+        return (getattr(self, "btn_md_preview", None), getattr(self, "btn_md_create", None))
+
+    def _md_read(self) -> str:
+        """读文件；失败返回空串并写日志（不抛异常栈）。"""
+        path = str(getattr(self, "_md_path", "") or "")
+        if not path:
+            self.log(self.man_log, "✗ 还没选文件：先点「📂 选择 md 文件…」"
+                                   "（要建单篇可直接把内容粘到上面的粘贴框用「🔎 识别并预览」）", "err")
+            self.set_status("先选择要拆分的 md 文件", err=True)
+            return ""
+        try:
+            return Path(path).read_text(encoding="utf-8", errors="replace")
+        except Exception as exc:  # noqa: BLE001
+            self.log(self.man_log, f"✗ 读取文件失败（{Path(path).name}）："
+                                   f"{type(exc).__name__}: {exc}", "err")
+            self.set_status(f"读取文件失败：{exc}", err=True)
+            return ""
+
+    def _md_plan(self) -> list:
+        """按标题先算出"会建哪些词条、判成什么类型、放哪个目录、正文字数"（不写盘）。"""
+        rows: list = []
+        self._md_entries = []
+        if not str(getattr(self, "_md_path", "") or ""):
+            return rows
+        text = self._md_read()
+        if not text.strip():
+            return rows
+        try:
+            entries = core.split_markdown_entries(text, level=self._md_level())
+        except Exception as exc:  # noqa: BLE001
+            self.log(self.man_log, f"✗ 拆分文档失败：{type(exc).__name__}: {exc}", "err")
+            return rows
+        self._md_entries = entries
+        default_type = self._md_default_type()
+        routes = self.cfg.get("routes") or {}
+        for e in entries:
+            title = str(e.get("title") or "").strip()
+            meta = e.get("meta") or {}
+            t = (default_type or str(meta.get("类型") or meta.get("type") or "").strip()
+                 or core.guess_note_type(title))
+            d = str(routes.get(t) or "").strip()
+            rows.append({"name": title, "type": t or "—",
+                         "dir": d or "—（该类型没有对应目录）",
+                         "chars": len(str(e.get("body") or ""))})
+        return rows
+
+    def _fill_md_table(self, rows: list):
+        if not hasattr(self, "md_tree"):
+            return
+        for iid in self.md_tree.get_children():
+            self.md_tree.delete(iid)
+        self._md_rows = {}
+        for row in rows or []:
+            iid = self.md_tree.insert("", "end", values=(row["name"], row["type"],
+                                                         row["dir"], row["chars"]))
+            self._md_rows[iid] = row
+
+    def do_md_preview(self):
+        self._do_md(dry_run=True)
+
+    def do_md_create(self):
+        self._do_md(dry_run=False)
+
+    def _do_md(self, dry_run: bool):
+        text = self._md_read()
+        if not text.strip():
+            return
+        try:
+            entries = core.split_markdown_entries(text, level=self._md_level())
+        except Exception as exc:  # noqa: BLE001
+            self.log(self.man_log, f"✗ 拆分文档失败：{type(exc).__name__}: {exc}", "err")
+            self.set_status(f"拆分文档失败：{exc}", err=True)
+            return
+        if not entries:
+            self.log(self.man_log, "✗ 这份文档里没找到可拆分的标题：请确认文档里有标题行"
+                                   "（如 `## 词条名`），或把「标题级别」改成文档实际用的级别"
+                                   "（# / ## / ### / ####）", "err")
+            self.set_status("文档里没有找到可拆分的标题", err=True)
+            return
+        self._fill_md_table(self._md_plan())             # 先把"会建到哪"刷新出来
+        cfg, lv, tp = self.cfg, self._md_level(), self._md_default_type()
+        dl = bool(self.md_dl_img_var.get()) if hasattr(self, "md_dl_img_var") else False
+
+        def work():
+            return core.import_markdown_document(cfg, text, level=lv, type_override=tp,
+                                                 dry_run=dry_run, overwrite=False,
+                                                 download_images=dl)
+
+        desc = "📄 md 批量建库（预览）" if dry_run else "📄 md 批量建库（创建）"
+        self.run_task(work, lambda r: self._on_md_done(r, dry_run=dry_run), desc,
+                      busy=self._md_busy())
+
+    def _on_md_done(self, r, dry_run: bool):
+        r = self._on_result(self.man_log, r, "从 md 批量建库失败：")
+        if r is None:
+            return
+        created = [str(x) for x in (r.get("created") or [])]
+        skipped = [str(x) for x in (r.get("skipped") or [])]
+        failed = [str(x) for x in (r.get("failed") or [])]
+        report = [str(x) for x in (r.get("report") or [])]
+        total = r.get("total")
+        if not created and not skipped and not failed:
+            detail = "；".join(report) or "这份文档里没有拆出词条"
+            self.log(self.man_log, f"✗ {detail}", "err")
+            self.set_status(detail, err=True)
+            return
+        self.log(self.man_log,
+                 f"{'🔍 预览' if dry_run else '✅ 已建库'}："
+                 f"已建 {len(created)} 篇／跳过 {len(skipped)} 篇／失败 {len(failed)} 篇"
+                 f"（共 {total} 条）", "err" if failed else "ok")
+        for line in report:
+            self.log(self.man_log, "   · " + line, "info")
+        if failed:
+            self.log(self.man_log, "   失败：" + "、".join(failed[:20])
+                     + ("…" if len(failed) > 20 else ""), "err")
+        if dry_run:
+            self.log(self.man_log, "   以上只是预览，没有写盘；确认无误点「✅ 批量创建（先备份）」", "info")
+        else:
+            self.log(self.man_log, "   往骨架里填内容用 ⑦ 补充更新页；补正文双链用 ⑤ 索引与统计页。", "info")
+            self._last_write_dir = str(Path(str(getattr(self, "_md_path", ""))).parent)
+        self.set_status(f"md 批量建库{'预览' if dry_run else '完成'}："
+                        f"已建 {len(created)}／跳过 {len(skipped)}／失败 {len(failed)}")
+
+    def _build_update_tab(self, nb):
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="⑦ 补充更新")
+
+        tip = ("选一篇**已存在**的词条 → 粘要补的内容 → 自动对齐模板与格式规范并**只做补充**："
+               "只填空字段/空小节、只追加缺失小节，已有内容一字不动；写入前旧版自动备份到 "
+               f"{core.BACKUP_DIR_NAME}/笔记/。本页**不会新建**词条（新建用 ⑥ 页）。")
+        ttk.Label(tab, text=tip, foreground="#555", wraplength=1180,
+                  justify="left").pack(anchor="w", padx=10, pady=(2, 0))
+
+        # ① 选目标词条
+        f1 = ttk.LabelFrame(tab, text="① 选目标词条（知识库里已有的 .md）")
+        f1.pack(fill="x", padx=8, pady=(2, 2))
+        r1 = ttk.Frame(f1)
+        r1.pack(fill="x", padx=4, pady=(3, 1))
+        ttk.Label(r1, text="搜索：").pack(side="left")
+        self.upd_kw_var = tk.StringVar()
+        self.upd_kw_entry = ttk.Entry(r1, textvariable=self.upd_kw_var, width=26)
+        self.upd_kw_entry.pack(side="left", padx=4)
+        self.upd_kw_entry.bind("<Return>", lambda _e: (self.do_update_search(), "break")[1])
+        self.btn_upd_search = ttk.Button(r1, text="🔍 搜索", command=self.do_update_search)
+        self.btn_upd_search.pack(side="left", padx=4)
+        self.btn_upd_guess = ttk.Button(r1, text="🎯 用粘贴内容猜标题",
+                                        command=self.do_update_guess_title)
+        self.btn_upd_guess.pack(side="left", padx=4)
+        self.btn_upd_open = ttk.Button(r1, text="打开该条目", command=self.open_update_target,
+                                       state="disabled")
+        self.btn_upd_open.pack(side="left", padx=4)
+        ttk.Label(r1, text="（双击列表项选中）",
+                  foreground="#666").pack(side="left", padx=6)
+
+        # 路径行已按用户要求去掉（不再展示"知识库根目录"这类没意义的信息）；
+        # upd_path_var 仍保留（仅内部记录选中项，不显示控件）。
+        self.upd_path_var = tk.StringVar()
+
+        self.upd_target_var = tk.StringVar(value="目标：未选择")
+        ttk.Label(f1, textvariable=self.upd_target_var, foreground="#0b3d91").pack(
+            anchor="w", padx=6, pady=(0, 1))
+
+        wrap = ttk.Frame(f1)
+        wrap.pack(fill="x", expand=False, padx=4, pady=(0, 4))
+        cols = ("title", "rel", "type", "size", "mtime")     # 标题在前、路径（相对知识库）在后
+        self.upd_tree = ttk.Treeview(wrap, columns=cols, show="headings", height=7)
+        for col, title, width, stretch in (("title", "标题", 300, True),
+                                           ("rel", "路径", 260, False),
+                                           ("type", "类型", 70, False),
+                                           ("size", "大小", 70, False),
+                                           ("mtime", "修改时间", 130, False)):
+            self.upd_tree.heading(col, text=title)
+            self.upd_tree.column(col, width=width, anchor="w", stretch=stretch)
+        vsb = ttk.Scrollbar(wrap, orient="vertical", command=self.upd_tree.yview)
+        self.upd_tree.configure(yscrollcommand=vsb.set)
+        self.upd_tree.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+        self.upd_tree.bind("<<TreeviewSelect>>", self._on_update_tree_select)
+        self.upd_tree.bind("<Double-1>", self._on_update_tree_double)
+        self._upd_rows = {}
+        self._upd_target = ""
+
+        # ② 粘贴要补充的内容（附加 frontmatter 小框默认隐藏，勾选才出现）
+        f2 = ttk.PanedWindow(tab, orient="horizontal")
+        f2.pack(fill="x", expand=False, padx=8, pady=(2, 2))
+        self.upd_paste_pane = f2
+        lf = ttk.LabelFrame(
+            f2, text="② 粘贴要补充的内容（Markdown；有 ## / ### 小节会自动对齐到模板小节，"
+                     "没有小节标题时整段放进第一个空小节）")
+        f2.add(lf, weight=1)
+        self.upd_content = tk.Text(lf, wrap="word", bg="#ffffff",
+                                   font=("Microsoft YaHei UI", 11), undo=True, height=6)
+        sb = ttk.Scrollbar(lf, command=self.upd_content.yview)
+        self.upd_content.configure(yscrollcommand=sb.set)
+        self.upd_content.pack(side="left", fill="both", expand=True, padx=4, pady=3)
+        sb.pack(side="right", fill="y")
+        rf = ttk.LabelFrame(f2, text="附加 frontmatter 字段（键: 值，每行一个）")
+        self.upd_fm_frame = rf
+        self.upd_fm = tk.Text(rf, wrap="word", bg="#ffffff",
+                              font=("Microsoft YaHei UI", 10), height=6, width=28)
+        self.upd_fm.pack(fill="both", expand=True, padx=4, pady=3)
+
+        # 选项行
+        f3 = ttk.Frame(tab)
+        f3.pack(fill="x", padx=8, pady=(0, 1))
+        self.upd_fm_show_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(f3, text="附加 frontmatter 字段（一般不用）",
+                        variable=self.upd_fm_show_var,
+                        command=self._toggle_update_fm).pack(side="left", padx=4)
+        self.upd_add_missing_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(f3, text="同时补齐模板里缺失的小节（写 <!-- TODO: 待补 -->）",
+                        variable=self.upd_add_missing_var).pack(side="left", padx=10)
+
+        # 操作行
+        f4 = ttk.Frame(tab)
+        f4.pack(fill="x", padx=8, pady=(1, 1))
+        self.btn_upd_format = ttk.Button(f4, text="📐 只按格式规范整理整篇（不加内容）",
+                                         command=self.do_update_format)
+        self.btn_upd_format.pack(side="left", padx=4)
+        self.btn_upd_preview = ttk.Button(f4, text="🔎 预览整合结果",
+                                          command=self.do_update_preview)
+        self.btn_upd_preview.pack(side="left", padx=4)
+        self.btn_upd_write = ttk.Button(f4, text="✅ 补充更新（先备份）",
+                                        command=self.do_update_write)
+        self.btn_upd_write.pack(side="left", padx=4)
+        ttk.Button(f4, text="🧹 清空", command=self.do_update_clear).pack(side="left", padx=4)
+        self.btn_upd_link = ttk.Button(f4, text="🔗 补正文双链（预览）",
+                                       command=self.do_update_link_preview)
+        self.btn_upd_link.pack(side="left", padx=(12, 4))
+        self.btn_upd_link_write = ttk.Button(f4, text="🔗 补正文双链（写入）",
+                                             command=self.do_update_link_write)
+        self.btn_upd_link_write.pack(side="left", padx=4)
+        ttk.Button(f4, text="复制日志",
+                   command=lambda: self.copy_log(self.upd_log)).pack(side="right", padx=2)
+        ttk.Button(f4, text="清空日志",
+                   command=lambda: self.clear_log(self.upd_log)).pack(side="right", padx=2)
+
+        # 双链增强选项行：AI 专名模式（通称/异名/库里还没有的专名）
+        f4b = ttk.Frame(tab)
+        f4b.pack(fill="x", padx=8, pady=(0, 2))
+        self.upd_ai_link_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(f4b, text="✨ 用 AI 识别专名（更全：通称、异名、库里还没有的专名）",
+                        variable=self.upd_ai_link_var).pack(side="left", padx=4)
+        self.upd_red_link_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(f4b, text="库内没有的专名也标成待建链接",
+                        variable=self.upd_red_link_var).pack(side="left", padx=10)
+        ttk.Label(f4b, foreground="#666",
+                  text="（AI 模式每篇调用一次模型，约 30–60 秒；能对上的写成 [[真实词条|正文写法]]，"
+                       "对不上的列成「该建词条」清单）").pack(side="left", padx=6)
+
+        # 日志 / 预览（信息最密 → 窗口变大时空间优先给它）
+        body = ttk.Frame(tab)
+        body.pack(fill="both", expand=True, padx=8, pady=(2, 4))
+        self.upd_log = tk.Text(body, wrap="none", state="disabled", height=8, bg="#fdfdfd",
+                               font=("Microsoft YaHei UI", 10))
+        vsb2 = ttk.Scrollbar(body, orient="vertical", command=self.upd_log.yview)
+        hsb2 = ttk.Scrollbar(body, orient="horizontal", command=self.upd_log.xview)
+        self.upd_log.configure(yscrollcommand=vsb2.set, xscrollcommand=hsb2.set)
+        self.upd_log.grid(row=0, column=0, sticky="nsew")
+        vsb2.grid(row=0, column=1, sticky="ns")
+        hsb2.grid(row=1, column=0, sticky="ew")
+        body.rowconfigure(0, weight=1)
+        body.columnconfigure(0, weight=1)
+        self.upd_log.tag_configure("info", foreground="#222")
+        self.upd_log.tag_configure("ok", foreground="#0a7d32")
+        self.upd_log.tag_configure("err", foreground="#b00020")
+        self.upd_log.tag_configure("head", foreground="#0b3d91",
+                                   font=("Microsoft YaHei UI", 12, "bold"))
+
+    def _toggle_update_fm(self):
+        """勾选「附加 frontmatter 字段」时才把那块小框加进粘贴区（不勾则粘贴框占满整行）。"""
+        show = bool(getattr(self, "upd_fm_show_var", None)
+                    and self.upd_fm_show_var.get())
+        pane = getattr(self, "upd_paste_pane", None)
+        frame = getattr(self, "upd_fm_frame", None)
+        if pane is None or frame is None:
+            return
+        try:
+            panes = tuple(pane.panes())
+            key = str(frame)
+            if show and key not in panes:
+                pane.add(frame, weight=1)
+            elif not show and key in panes:
+                pane.forget(frame)
+        except Exception:
+            pass
+
+    # ---------------- ⑦ 页逻辑 ----------------
+
+    def _update_target_path(self) -> str:
+        return (getattr(self, "_upd_target", "") or "").strip()
+
+    def _rel_note_path(self, path: str) -> str:
+        """笔记路径 → 相对知识库的路径（如 `03 派系图谱/北洋系.md`，正斜杠），便于分辨同名条目。"""
+        try:
+            p = Path(path)
+            kb = core.resolve_kb(self.cfg)
+            if kb is not None:
+                rel = str(p.resolve().relative_to(Path(kb).resolve()))
+            else:
+                rel = f"{p.parent.name}/{p.name}"
+        except Exception:
+            try:
+                p = Path(path)
+                rel = f"{p.parent.name}/{p.name}"
+            except Exception:
+                rel = str(path)
+        return rel.replace("\\", "/")
+
+    def _type_of_dir(self, dirname: str) -> str:
+        """目录名 → ②页映射的类型（纯字典查找，不读文件）。"""
+        d = core.normalize_dir_name(dirname or "")
+        if not d:
+            return ""
+        for type_, target in (self.cfg.get("routes") or {}).items():
+            if core.normalize_dir_name(str(target)) == d:
+                return type_
+        return ""
+
+    def _set_update_target(self, path: str, quiet: bool = False):
+        """设/清空目标词条，并把「目标：…」标签（类型 + 小节填充情况）、路径框、打开按钮同步好。"""
+        path = (path or "").strip()
+        self._upd_target = path
+        if not path:
+            self.upd_target_var.set("目标：未选择")
+            self._set_enabled([self.btn_upd_open], False)
+            return
+        p = Path(path)
+        self.upd_path_var.set(path)
+        try:
+            type_ = core.detect_type_of_note(self.cfg, p)
+        except Exception:
+            type_ = ""
+        try:
+            stats = core.section_stats(self.cfg, p)
+        except Exception:
+            stats = None
+        parts = []
+        if type_:
+            parts.append(f"类型：{type_}")
+        if stats and stats.get("sections"):
+            parts.append(f"{len(stats['sections'])} 小节：{stats['filled']} 已填 / {stats['empty']} 空")
+        info = f"目标：{p.parent.name}/{p.name}"
+        if parts:
+            info += "（" + "；".join(parts) + "）"
+        empties = [s.get("label", "") for s in (stats or {}).get("sections", [])
+                   if not s.get("filled") and s.get("label")]
+        if empties:
+            info += "；建议补充：" + "、".join(empties[:4]) + ("…" if len(empties) > 4 else "")
+        self.upd_target_var.set(info)
+        self._set_enabled([self.btn_upd_open], p.is_file())
+        if not quiet and stats is not None:
+            self.set_status(f"已选目标：{p.parent.name}/{p.name}"
+                            f"（{stats.get('filled', 0)} 已填 / {stats.get('empty', 0)} 空）")
+
+    def do_update_search(self):
+        """搜索已有词条（关键词可为空 = 全列）。"""
+        kw = self.upd_kw_var.get().strip()
+        cfg = self.cfg
+
+        def work():
+            return core.list_notes(cfg, kw)
+
+        self.run_task(work, self._on_update_search_done, "搜索已有词条",
+                      busy=(self.btn_upd_search,))
+
+    def _on_update_search_done(self, r):
+        r = self._on_result(self.upd_log, r, "搜索失败：")
+        if r is None:
+            return
+        rows = r or []
+        for iid in self.upd_tree.get_children():
+            self.upd_tree.delete(iid)
+        self._upd_rows = {}
+        for row in rows:
+            dirname = str(row.get("dir", ""))
+            iid = self.upd_tree.insert(
+                "", "end", values=(row.get("title", ""), self._rel_note_path(row.get("path", "")),
+                                   self._type_of_dir(dirname),
+                                   f"{row.get('size_kb', 0)} KB", row.get("mtime", "")))
+            self._upd_rows[iid] = row
+        kw = self.upd_kw_var.get().strip()
+        kb = core.resolve_kb(self.cfg)
+        self.log(self.upd_log, f"✓ 搜索到 {len(rows)} 篇词条"
+                 + (f"（关键词：{kw}）" if kw else "（全部）")
+                 + f"｜知识库：{kb if kb else '未设置'}", "ok")
+        if not rows and kw:
+            # 自诊断：换个来源再查一次，能查到就说明是配置/旧进程问题，直接提示
+            try:
+                again = core.list_notes(core.load_config(), kw)
+            except Exception:
+                again = []
+            if again:
+                self.log(self.upd_log, f"   ⚠ 用当前 config.json 直查能查到 {len(again)} 篇："
+                                       + "、".join(str(r.get("title")) for r in again[:5]), "err")
+                self.log(self.upd_log, "   → 说明是运行中的配置没刷新或程序版本较旧："
+                                       "到①页确认知识库路径后重试点搜索；用 exe 的话请用最新打包版。", "info")
+        hit = next((iid for iid, row in self._upd_rows.items()
+                    if str(row.get("title", "")) == kw), None) if kw else None
+        same_name = bool(hit)
+        if not hit and rows:                        # 没有同名条目 → 自动选中第一行，少点一次
+            kids = self.upd_tree.get_children()
+            hit = kids[0] if kids else None
+        if hit:
+            self.upd_tree.selection_set(hit)
+            self.upd_tree.focus(hit)
+            self.upd_tree.see(hit)
+            self._set_update_target(self._upd_rows[hit].get("path", ""))
+            self.log(self.upd_log, ("   自动选中同名条目：" if same_name else "   自动选中第一行：")
+                     + f"{self.upd_target_var.get()}", "info")
+            try:
+                self.upd_tree.focus_set()
+            except Exception:
+                pass
+        self.set_status(f"搜索完成：{len(rows)} 篇"
+                        + ("，已自动选中同名条目" if same_name
+                           else ("，已自动选中第一行" if hit else "（在列表选一篇，或直接填路径）")))
+
+    def _on_update_tree_select(self, _e=None):
+        sel = self.upd_tree.selection()
+        if not sel:
+            return
+        row = self._upd_rows.get(sel[0]) or {}
+        self._set_update_target(row.get("path", ""))
+
+    def _on_update_tree_double(self, _e=None):
+        """双击列表项：只选中 + 提示下一步（不自动跑任务，避免误触）。"""
+        self._on_update_tree_select()
+        if self._update_target_path():
+            self.set_status("已选目标，可在下面粘贴内容后点「🔎 预览整合结果」")
+
+    def use_update_path(self):
+        """直接用手填/粘贴的 .md 路径当目标。"""
+        p = (self.upd_path_var.get() or "").strip().strip('"')
+        if not p:
+            self.set_status("先填一个 .md 路径（或从上面搜索列表里选一篇）", err=True)
+            return
+        if not Path(p).is_file():
+            self.set_status(f"路径不存在：{p}", err=True)
+            return
+        self._set_update_target(p)
+        self.set_status(f"目标已设为：{p}")
+
+    def do_update_guess_title(self):
+        """从粘贴内容猜标题 → 填进搜索框并自动搜索。"""
+        text = self.upd_content.get("1.0", "end").strip()
+        if not text:
+            self.set_status("先在「② 粘贴要补充的内容」里粘内容，再点猜标题", err=True)
+            try:
+                self.upd_content.focus_set()
+            except Exception:
+                pass
+            return
+        try:
+            title = core.guess_title_from_text(self.cfg, text) or ""
+        except Exception as exc:                       # noqa: BLE001
+            self.set_status(f"猜标题失败：{type(exc).__name__}: {exc}", err=True)
+            return
+        if not title:
+            self.set_status("没从粘贴内容里认出标题（可手动填搜索框或路径）", err=True)
+            return
+        self.upd_kw_var.set(title)
+        self.log(self.upd_log, f"🎯 从粘贴内容认出标题：{title} → 自动搜索", "ok")
+        self.do_update_search()
+
+    def open_update_target(self):
+        path = self._update_target_path()
+        if not path:
+            self.set_status("还没选目标词条（搜索后双击列表项，或填路径点「用这个路径」）", err=True)
+            return
+        if self._open_dir(path):
+            self.set_status(f"已打开：{path}")
+        else:
+            self.set_status(f"打开失败，可手动打开：{path}", err=True)
+
+    def _update_fields(self) -> dict:
+        """附加 frontmatter 小框（键: 值，每行一个）→ dict。"""
+        fields: dict = {}
+        raw = self.upd_fm.get("1.0", "end").strip()
+        for line in raw.splitlines():
+            line = line.strip().lstrip("-").strip()
+            if not line or line.startswith("#") or ":" not in line:
+                continue
+            key, val = line.split(":", 1)
+            key, val = key.strip().strip("*").strip(), val.strip()
+            if key:
+                fields[key] = val
+        return fields
+
+    def _update_payload(self) -> tuple:
+        """返回 (sections, plain_text)：有小节标题就给 sections；没有就把整段交给 plain_text。"""
+        text = self.upd_content.get("1.0", "end").strip()
+        if not text:
+            return None, ""
+        try:
+            sections = core.parse_manual_input(text)
+        except Exception:                              # noqa: BLE001
+            sections = None
+        if sections:
+            return sections, ""
+        return None, text
+
+    def _update_require_target(self) -> str:
+        """取目标路径；没选/不存在时给明确提示并返回空串。"""
+        path = self._update_target_path()
+        if not path:
+            self.set_status("先选目标词条：搜索后双击列表项，或填路径点「用这个路径」", err=True)
+            return ""
+        if not Path(path).is_file():
+            self.set_status(f"目标文件不存在：{path}", err=True)
+            return ""
+        return path
+
+    def do_update_format(self):
+        """只按格式规范整理整篇（不加内容）：sections=None，dry_run=True。"""
+        path = self._update_require_target()
+        if not path:
+            return
+        cfg = self.cfg
+        add_missing = bool(self.upd_add_missing_var.get())
+
+        def work():
+            return core.update_note_file(cfg, Path(path), sections=None, plain_text="",
+                                         add_missing_sections=add_missing, dry_run=True)
+
+        self.run_task(work, lambda r: self._on_update_done(r, "📐 格式规范整理（预览）", write=False),
+                      "按格式规范整理", busy=self._update_busy())
+
+    def _update_busy(self) -> tuple:
+        return (self.btn_upd_format, self.btn_upd_preview, self.btn_upd_write,
+                getattr(self, "btn_upd_link", None), getattr(self, "btn_upd_link_write", None))
+
+    # ---- 补正文双链（⑦ 页，针对当前选中的那一篇）----
+
+    def do_update_link_preview(self):
+        self._do_update_link(dry_run=True)
+
+    def do_update_link_write(self):
+        self._do_update_link(dry_run=False)
+
+    def _do_update_link(self, dry_run: bool):
+        """补正文双链：dry_run=True 只预览；False 才写盘（写前 core 会自动备份）。
+
+        勾了「✨ 用 AI 识别专名」就走 AI 模式（识别通称/异名/库里还没有的专名）。
+        """
+        path = self._update_require_target()
+        if not path:
+            return
+        cfg = self.cfg
+        use_ai = bool(getattr(self, "upd_ai_link_var", None) and self.upd_ai_link_var.get())
+        red = bool(getattr(self, "upd_red_link_var", None) and self.upd_red_link_var.get())
+
+        def work():
+            if use_ai:
+                return core.link_keywords_ai(cfg, Path(path), dry_run=dry_run, red_links=red)
+            return core.link_keywords(cfg, Path(path), dry_run=dry_run)
+
+        desc = ("🔗 AI 补专名双链（预览）" if dry_run else "🔗 AI 补专名双链（写入）") if use_ai \
+            else ("🔗 补正文双链（预览）" if dry_run else "🔗 补正文双链（写入）")
+        if use_ai:
+            self.set_status(f"{desc}：AI 识别中，约 30–60 秒…")
+        self.run_task(work, lambda r: self._on_update_link_done(r, dry_run=dry_run), desc,
+                      busy=self._update_busy())
+
+    def _on_update_link_done(self, r, dry_run: bool):
+        r = self._on_result(self.upd_log, r, "补正文双链失败：")
+        if r is None:
+            return
+        if not r.get("ok"):
+            detail = "；".join(str(x) for x in (r.get("report") or ["补正文双链未能完成"]))
+            self.log(self.upd_log, f"✗ {detail}", "err")
+            self.set_status(f"{detail}（详情见日志区）", err=True)
+            return
+        action = r.get("action") or ("预览" if dry_run else "已补双链")
+        added = r.get("added") or []
+        report = [str(x) for x in (r.get("report") or [])]
+        path = str(r.get("path") or "")
+        name = f"{Path(path).parent.name}/{Path(path).name}" if path else ""
+        head = "─── 🔗 " + ("正文双链预览" if dry_run else "已补正文双链")
+        if name:
+            head += f" → {name}"
+        head += " ───"
+        self._show_update_log(r.get("text") or "", head=head)
+        if action == "无改动":
+            self.log(self.upd_log, "✓ 这篇没有可补的词条双链（或已经链过了）", "ok")
+            for line in report:
+                self.log(self.upd_log, "   · " + line, "info")
+            if dry_run:
+                self.log(self.upd_log, "   （以上只是预览，没有改动文件）", "info")
+            self.set_status(f"没有可补的词条双链（{name or path} 未改动）")
+            return
+        self.log(self.upd_log, f"✓ {'预览' if dry_run else '已补双链'}："
+                              f"新增双链 {len(added)} 个", "ok")
+        for line in report:
+            self.log(self.upd_log, "   · " + line, "info")
+        if added:
+            self.log(self.upd_log, "   " + "、".join(f"[[{a}]]" for a in added[:20])
+                     + ("…" if len(added) > 20 else ""), "info")
+        red = [str(x) for x in (r.get("red") or [])]
+        if red:
+            self.log(self.upd_log,
+                     f"   📝 库内暂无对应词条（{len(red)} 个）——可作为「该建哪些词条」的清单：", "info")
+            self.log(self.upd_log, "      " + "、".join(red[:30]) + ("…" if len(red) > 30 else ""),
+                     "info")
+        if dry_run:
+            self.log(self.upd_log, "   （以上只是预览，没有改动文件）", "info")
+            self.set_status(f"双链预览：可新增 {len(added)} 个（{name}）")
+        else:
+            self.log(self.upd_log, f"✓ 已写入：{path}", "ok")
+            self.log(self.upd_log,
+                     f"   旧版已备份到 {core.BACKUP_DIR_NAME}/笔记/（同名只留最新一份）", "info")
+            self._last_write_path = path
+            self.set_status(f"已补双链 {len(added)} 个：{name}")
+
+    def do_update_preview(self):
+        """预览整合结果（不写盘）：sections=解析结果 + plain_text=整段。"""
+        path = self._update_require_target()
+        if not path:
+            return
+        sections, plain = self._update_payload()
+        if not sections and not plain:
+            self.set_status("先粘要补充的内容（没有 ## 小节也行，整段会放进第一个空小节）", err=True)
+            try:
+                self.upd_content.focus_set()
+            except Exception:
+                pass
+            return
+        cfg = self.cfg
+        fields = self._update_fields()
+        add_missing = bool(self.upd_add_missing_var.get())
+
+        def work():
+            return core.update_note_file(cfg, Path(path), sections=sections, fields=fields,
+                                         plain_text=plain, add_missing_sections=add_missing,
+                                         dry_run=True)
+
+        self.run_task(work, lambda r: self._on_update_done(r, "🔎 整合预览", write=False),
+                      "预览整合结果", busy=self._update_busy())
+
+    def do_update_write(self):
+        """补充更新（写盘，写前自动备份）。"""
+        path = self._update_require_target()
+        if not path:
+            return
+        sections, plain = self._update_payload()
+        cfg = self.cfg
+        fields = self._update_fields()
+        add_missing = bool(self.upd_add_missing_var.get())
+
+        def work():
+            return core.update_note_file(cfg, Path(path), sections=sections, fields=fields,
+                                         plain_text=plain, add_missing_sections=add_missing,
+                                         dry_run=False)
+
+        self.run_task(work, lambda r: self._on_update_done(r, "✅ 补充更新", write=True),
+                      "补充更新", busy=self._update_busy())
+
+    def _on_update_done(self, r, desc: str, write: bool = False):
+        r = self._on_result(self.upd_log, r, f"{desc}失败：")
+        if r is None:
+            return
+        if not r.get("ok"):
+            detail = "；".join(str(x) for x in (r.get("report") or [f"{desc}未能完成"]))
+            self.log(self.upd_log, f"✗ {detail}", "err")
+            self.set_status(f"{detail}（详情见日志区）", err=True)
+            return
+        action = r.get("action") or ("补充更新" if write else "预览")
+        path = str(r.get("path") or "")
+        report = r.get("report") or []
+        summary = r.get("summary") or core.summarize_merge(report)
+        name = f"{Path(path).parent.name}/{Path(path).name}" if path else ""
+        head = f"─── {desc}"
+        if name:
+            head += f" → {name}"
+        if summary:
+            head += f"（{summary}）"
+        head += " ───"
+        self._show_update_log(r.get("text") or "", head=head)
+        self.log(self.upd_log, f"✓ {action}：{r.get('type') or ''}／{r.get('title') or ''}"
+                 + (f"　{summary}" if summary else ""), "ok")
+        for line in report:
+            self.log(self.upd_log, "   · " + str(line), "info")
+        if action == "无改动":
+            self.log(self.upd_log, "   （没有可补充的新内容——已有内容都保留了，未改动文件）", "info")
+        if write and action == "补充更新" and path:
+            self.log(self.upd_log, f"✓ 已写入：{path}", "ok")
+            self.log(self.upd_log,
+                     f"   旧版已备份到 {core.BACKUP_DIR_NAME}/笔记/（同名只留最新一份）", "info")
+            self._last_write_path = path
+        if action == "预览":
+            self.log(self.upd_log, "   （以上只是预览，没有改动文件；确认后点「✅ 补充更新」）", "info")
+        if action == "无改动":
+            self.set_status(f"没有需要补充的内容（{name or path} 未改动）")
+        elif write:
+            self.set_status(f"已{action}：{name}　{summary}" if name else f"已{action}：{summary}")
+        else:
+            self.set_status(f"{action}：{summary}")
+
+    def _show_update_log(self, text: str, head: str = ""):
+        w = self.upd_log
+        w.configure(state="normal")
+        w.delete("1.0", "end")
+        w.insert("end", (head or "─── 整合结果 ───") + "\n", "head")
+        w.insert("end", text or "（没有内容可显示）")
+        self._scroll_to_end(w)
+        w.configure(state="disabled")
+
+    def do_update_clear(self):
+        self.upd_content.delete("1.0", "end")
+        self.upd_fm.delete("1.0", "end")
+        self.upd_kw_var.set("")
+        self.upd_path_var.set("")
+        self._set_update_target("", quiet=True)
+        if hasattr(self, "upd_add_missing_var"):
+            self.upd_add_missing_var.set(False)
+        if hasattr(self, "upd_fm_show_var"):
+            self.upd_fm_show_var.set(False)      # 顺带把附加 frontmatter 小框收起来
+            self._toggle_update_fm()
+        for iid in self.upd_tree.get_children():
+            self.upd_tree.delete(iid)
+        self._upd_rows = {}
+        self.clear_log(self.upd_log, silent=True)
+        self.set_status("已清空 ⑦ 补充更新页的输入")
+
+    # ------------------------------------------------------------------
+    # Tab8 批量建条（按关键词批量建骨架词条）
+    # ------------------------------------------------------------------
+
+    def _build_skeleton_tab(self, nb):
+        self.SK_AUTO_TYPE = "（自动判断）"
+        self.SK_AUTO_DIR = "（按类型自动）"
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="⑧ 批量建条")
+
+        tip = ("每行一个关键词；可写 `类型:名称` 指定类型（类型名同 ② 页）；"
+               "程序自动按类型套模板并存到该类型对应目录；**已存在默认跳过**"
+               "（勾「只补空缺」则只填空字段/空小节，不覆盖已有内容）。")
+        ttk.Label(tab, text=tip, foreground="#555", wraplength=1180,
+                  justify="left").pack(anchor="w", padx=10, pady=(2, 0))
+
+        # ① 关键词清单
+        f1 = ttk.LabelFrame(tab, text="① 关键词清单（每行一个；可用 `类型:名称`；# 开头是注释）")
+        f1.pack(fill="x", padx=8, pady=(2, 2))
+        bar = ttk.Frame(f1)
+        bar.pack(fill="x", padx=4, pady=(3, 1))
+        self.btn_sk_load = ttk.Button(bar, text="📥 载入词表待建词条",
+                                      command=self.do_sk_load_terms)
+        self.btn_sk_load.pack(side="left", padx=4)
+        self.btn_sk_preview = ttk.Button(bar, text="🔍 预览（不写盘）",
+                                         command=self.do_sk_preview)
+        self.btn_sk_preview.pack(side="left", padx=4)
+        self.btn_sk_create = ttk.Button(bar, text="✅ 批量创建（先备份）",
+                                        command=self.do_sk_create)
+        self.btn_sk_create.pack(side="left", padx=4)
+        ttk.Button(bar, text="🧹 清空", command=self.do_sk_clear).pack(side="left", padx=4)
+        ttk.Button(bar, text="复制日志",
+                   command=lambda: self.copy_log(self.sk_log)).pack(side="right", padx=2)
+        ttk.Button(bar, text="清空日志",
+                   command=lambda: self.clear_log(self.sk_log)).pack(side="right", padx=2)
+
+        wrap = ttk.Frame(f1)
+        wrap.pack(fill="x", padx=4, pady=(0, 4))
+        self.sk_kw = tk.Text(wrap, wrap="none", height=8, bg="#fdfdfd",
+                             font=("Microsoft YaHei UI", 10))
+        vsb = ttk.Scrollbar(wrap, orient="vertical", command=self.sk_kw.yview)
+        hsb = ttk.Scrollbar(wrap, orient="horizontal", command=self.sk_kw.xview)
+        self.sk_kw.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        self.sk_kw.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+        wrap.rowconfigure(0, weight=1)
+        wrap.columnconfigure(0, weight=1)
+
+        # ② 选项行（一行，紧凑）
+        f2 = ttk.LabelFrame(tab, text="② 选项")
+        f2.pack(fill="x", padx=8, pady=(0, 2))
+        r2 = ttk.Frame(f2)
+        r2.pack(fill="x", padx=4, pady=(3, 3))
+        ttk.Label(r2, text="默认类型：").pack(side="left")
+        self.sk_type_var = tk.StringVar(value=self.SK_AUTO_TYPE)
+        self.sk_type_combo = ttk.Combobox(r2, textvariable=self.sk_type_var, width=12,
+                                          state="readonly", values=[self.SK_AUTO_TYPE])
+        self.sk_type_combo.pack(side="left", padx=4)
+        ttk.Label(r2, text="默认目录：").pack(side="left", padx=(10, 0))
+        self.sk_dir_var = tk.StringVar(value=self.SK_AUTO_DIR)
+        self.sk_dir_combo = ttk.Combobox(r2, textvariable=self.sk_dir_var, width=20,
+                                         state="readonly", values=[self.SK_AUTO_DIR])
+        self.sk_dir_combo.pack(side="left", padx=4)
+        self.sk_overwrite_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(r2, text="已存在的条目：只补空缺（不覆盖已有内容）",
+                        variable=self.sk_overwrite_var).pack(side="left", padx=10)
+        ttk.Label(r2, text="最多处理").pack(side="left", padx=(10, 0))
+        self.sk_limit_var = tk.StringVar(value="")
+        ttk.Entry(r2, textvariable=self.sk_limit_var, width=6).pack(side="left", padx=2)
+        ttk.Label(r2, text="条（空=全部）", foreground="#666").pack(side="left")
+
+        # ③ 会建到哪（预览前就先按关键词算好）
+        f3 = ttk.LabelFrame(tab, text="③ 会建到哪（按关键词先算好；点预览/创建后状态会更新）")
+        f3.pack(fill="x", padx=8, pady=(0, 2))
+        wrap3 = ttk.Frame(f3)
+        wrap3.pack(fill="x", padx=4, pady=(3, 4))
+        cols = ("name", "type", "dir", "status")
+        self.sk_tree = ttk.Treeview(wrap3, columns=cols, show="headings", height=6)
+        for col, title, width, stretch in (("name", "名称", 420, True),
+                                           ("type", "类型", 90, False),
+                                           ("dir", "目录", 260, False),
+                                           ("status", "状态", 140, False)):
+            self.sk_tree.heading(col, text=title)
+            self.sk_tree.column(col, width=width, anchor="w", stretch=stretch)
+        vsb3 = ttk.Scrollbar(wrap3, orient="vertical", command=self.sk_tree.yview)
+        self.sk_tree.configure(yscrollcommand=vsb3.set)
+        self.sk_tree.pack(side="left", fill="both", expand=True)
+        vsb3.pack(side="right", fill="y")
+        self._sk_rows = {}
+
+        # ④ 日志：信息最密 → 窗口变大时空间优先给它
+        f4 = ttk.LabelFrame(tab, text="④ 日志")
+        f4.pack(fill="both", expand=True, padx=8, pady=(0, 6))
+        body = ttk.Frame(f4)
+        body.pack(fill="both", expand=True, padx=4, pady=(3, 4))
+        self.sk_log = tk.Text(body, wrap="none", state="disabled", height=8, bg="#fdfdfd",
+                              font=("Microsoft YaHei UI", 10))
+        vsb4 = ttk.Scrollbar(body, orient="vertical", command=self.sk_log.yview)
+        hsb4 = ttk.Scrollbar(body, orient="horizontal", command=self.sk_log.xview)
+        self.sk_log.configure(yscrollcommand=vsb4.set, xscrollcommand=hsb4.set)
+        self.sk_log.grid(row=0, column=0, sticky="nsew")
+        vsb4.grid(row=0, column=1, sticky="ns")
+        hsb4.grid(row=1, column=0, sticky="ew")
+        body.rowconfigure(0, weight=1)
+        body.columnconfigure(0, weight=1)
+        for tag, color in (("info", "#222"), ("ok", "#0a7d32"), ("err", "#b00020")):
+            self.sk_log.tag_configure(tag, foreground=color)
+
+        self.refresh_skeleton_options()
+
+    # ---------------- ⑧ 页：选项 / 取值 / 计划 ----------------
+
+    def refresh_skeleton_options(self):
+        """类型下拉=②页映射的类型；目录下拉=映射里的目录 + 知识库实际内容目录。"""
+        if not hasattr(self, "sk_type_combo"):
+            return
+        auto_t = getattr(self, "SK_AUTO_TYPE", "（自动判断）")
+        auto_d = getattr(self, "SK_AUTO_DIR", "（按类型自动）")
+        types = [auto_t] + sorted((self.cfg.get("routes") or {}).keys())
+        dirs = [auto_d] + self._sk_content_dirs()
+        self.sk_type_combo["values"] = types
+        self.sk_dir_combo["values"] = dirs
+        if self.sk_type_var.get() not in types:
+            self.sk_type_var.set(auto_t)
+        if self.sk_dir_var.get() not in dirs:
+            self.sk_dir_var.set(auto_d)
+
+    def _sk_content_dirs(self) -> list:
+        out: list = []
+        for v in (self.cfg.get("routes") or {}).values():
+            v = str(v or "").strip()
+            if v and v not in out:
+                out.append(v)
+        try:
+            kb = core.resolve_kb(self.cfg)
+            if kb is not None:
+                for p in sorted(kb.iterdir()):
+                    name = p.name
+                    if (p.is_dir() and name not in out and not name.startswith(("_", "."))
+                            and "模板" not in name and "Templates" not in name):
+                        out.append(name)
+        except Exception:
+            pass
+        return out
+
+    def _sk_text(self) -> str:
+        return self.sk_kw.get("1.0", "end").strip() if hasattr(self, "sk_kw") else ""
+
+    def _sk_default_type(self) -> str:
+        v = self.sk_type_var.get().strip() if hasattr(self, "sk_type_var") else ""
+        return "" if v == getattr(self, "SK_AUTO_TYPE", "") else v
+
+    def _sk_default_dir(self) -> str:
+        v = self.sk_dir_var.get().strip() if hasattr(self, "sk_dir_var") else ""
+        return "" if v == getattr(self, "SK_AUTO_DIR", "") else v
+
+    def _sk_overwrite(self) -> bool:
+        return bool(self.sk_overwrite_var.get()) if hasattr(self, "sk_overwrite_var") else False
+
+    def _sk_limit(self) -> int:
+        raw = self.sk_limit_var.get().strip() if hasattr(self, "sk_limit_var") else ""
+        try:
+            return max(0, int(raw))
+        except Exception:
+            return 0
+
+    def _sk_plan(self) -> list:
+        """按当前关键词算出"会建到哪"：[{name, type, dir, status}]（不写盘、不调用模型）。"""
+        rows: list = []
+        try:
+            kb = core.resolve_kb(self.cfg)
+        except Exception:
+            kb = None
+        for it in core.parse_keyword_lines(self._sk_text(), default_type=self._sk_default_type(),
+                                           default_dir=self._sk_default_dir()):
+            name = str(it.get("name") or "").strip()
+            if not name:
+                continue
+            t = str(it.get("type") or "").strip() or core.guess_note_type(name)
+            d = str(it.get("dir") or "").strip() or str((self.cfg.get("routes") or {}).get(t) or "")
+            if not d:
+                rows.append({"name": name, "type": t or "—", "dir": "—",
+                             "status": "没有对应目录"})
+                continue
+            status = "待处理"
+            if kb is not None:
+                try:
+                    title = core.sanitize_title(name) or name
+                    status = "已存在" if (kb / d / f"{title}.md").exists() else "待新建"
+                except Exception:
+                    status = "待处理"
+            rows.append({"name": name, "type": t or "—", "dir": d, "status": status})
+        limit = self._sk_limit()
+        return rows[:limit] if limit else rows
+
+    def _fill_sk_table(self, rows: list):
+        for iid in self.sk_tree.get_children():
+            self.sk_tree.delete(iid)
+        self._sk_rows = {}
+        for row in rows:
+            iid = self.sk_tree.insert("", "end", values=(row["name"], row["type"],
+                                                         row["dir"], row["status"]))
+            self._sk_rows[iid] = row
+
+    def _sk_busy(self) -> tuple:
+        return (getattr(self, "btn_sk_load", None), getattr(self, "btn_sk_preview", None),
+                getattr(self, "btn_sk_create", None))
+
+    # ---------------- ⑧ 页：动作 ----------------
+
+    def do_sk_load_terms(self):
+        """把词表里"库内还没有的待建词条"填进关键词框（只填前 200 条）。"""
+        terms: list = []
+        src = "链接词表"
+        try:
+            data = core.load_term_dictionary()
+            terms = [str(x).strip() for x in (data.get("unresolved") or []) if str(x).strip()]
+        except Exception:
+            terms = []
+        if not terms:                                  # 词表为空时退回"正文+备份里汇总"
+            try:
+                terms = [str(x).strip() for x in core.collect_missing_terms(self.cfg, limit=200)
+                         if str(x).strip()]
+                src = "全库正文与备份"
+            except Exception:
+                terms = []
+        if not terms:
+            self.log(self.sk_log, "✗ 没有可载入的待建词条（词表与全库都没找到）", "err")
+            self.set_status("没有可载入的待建词条", err=True)
+            return
+        fill = terms[:200]
+        msg = (f"将把「{src}」里「库内还没有对应词条」的 {len(terms)} 条填入关键词框"
+               + ("，只填前 200 条以免太长" if len(terms) > 200 else "") + "。\n\n继续吗？")
+        if not messagebox.askokcancel("载入待建词条", msg, parent=self.root):
+            return
+        self.sk_kw.delete("1.0", "end")
+        self.sk_kw.insert("1.0", "\n".join(fill))
+        self._fill_sk_table(self._sk_plan())
+        self.log(self.sk_log, f"✓ 已从「{src}」载入 {len(fill)} 条待建词条"
+                              + (f"（共 {len(terms)} 条，仅载入前 200 条）" if len(terms) > 200 else ""),
+                 "ok")
+        self.set_status(f"已载入 {len(fill)} 条待建词条，可点「🔍 预览（不写盘）」看会建到哪")
+
+    def do_sk_preview(self):
+        self._do_sk(dry_run=True)
+
+    def do_sk_create(self):
+        self._do_sk(dry_run=False)
+
+    def _do_sk(self, dry_run: bool):
+        text = self._sk_text()
+        if not text:
+            self.set_status("先在「① 关键词清单」里填关键词（每行一个）", err=True)
+            return
+        self._fill_sk_table(self._sk_plan())            # 先按当前关键词刷新"会建到哪"
+        cfg = self.cfg
+        dt, dd, ow, limit = (self._sk_default_type(), self._sk_default_dir(),
+                             self._sk_overwrite(), self._sk_limit())
+
+        def work():
+            return core.create_skeleton_notes(cfg, text, type_=dt, target_dir=dd,
+                                              dry_run=dry_run, overwrite=ow, limit=limit)
+
+        desc = "🔍 批量建条（预览）" if dry_run else "✅ 批量建条（创建）"
+        self.run_task(work, lambda r: self._on_sk_done(r, dry_run=dry_run), desc,
+                      busy=self._sk_busy())
+
+    def _on_sk_done(self, r, dry_run: bool):
+        r = self._on_result(self.sk_log, r, "批量建条失败：")
+        if r is None:
+            return
+        created = [str(x) for x in (r.get("created") or [])]
+        skipped = [str(x) for x in (r.get("skipped") or [])]
+        failed = [str(x) for x in (r.get("failed") or [])]
+        report = [str(x) for x in (r.get("report") or [])]
+        if not created and not skipped and not failed:
+            detail = "；".join(report or ["没有可处理的条目（关键词清单是空的？）"])
+            self.log(self.sk_log, f"✗ {detail}", "err")
+            self.set_status(f"{detail}（详情见日志区）", err=True)
+            return
+        total = r.get("total")
+        self.log(self.sk_log,
+                 f"{'🔍 预览' if dry_run else '✅ 批量创建'}："
+                 f"创建 {len(created)} 篇／跳过 {len(skipped)} 篇／失败 {len(failed)} 篇"
+                 f"（共 {total} 条）", "err" if failed else "ok")
+        for line in report:
+            self.log(self.sk_log, "   · " + line, "info")
+        if failed:
+            self.log(self.sk_log, "   失败：" + "、".join(failed[:20])
+                     + ("…" if len(failed) > 20 else ""), "err")
+        if dry_run:
+            self.log(self.sk_log, "   以上只是预览，没有写盘；确认无误点「✅ 批量创建（先备份）」", "info")
+        else:
+            self.log(self.sk_log, "   新建的是骨架（TODO 占位）：填内容用 ⑦ 补充更新页，"
+                                  "补双链用 ⑤ 索引与统计页。", "info")
+        # 回填状态列
+        done: dict = {}
+        for x in created:
+            done[x.split("/")[-1].strip()] = "预览✓" if dry_run else "已创建"
+        for x in skipped:
+            done[x.strip()] = "已存在，跳过"
+        for x in failed:
+            done[x.strip()] = "失败"
+        for iid, row in getattr(self, "_sk_rows", {}).items():
+            st = done.get(str(row.get("name")))
+            if st:
+                try:
+                    self.sk_tree.set(iid, "status", st)
+                except Exception:
+                    pass
+        self.set_status(f"批量建条{'预览' if dry_run else '完成'}："
+                        f"创建 {len(created)}／跳过 {len(skipped)}／失败 {len(failed)}")
+
+    def do_sk_clear(self):
+        self.sk_kw.delete("1.0", "end")
+        self.sk_limit_var.set("")
+        self.sk_overwrite_var.set(False)
+        self._fill_sk_table([])
+        self.clear_log(self.sk_log, silent=True)
+        self.set_status("已清空 ⑧ 批量建条页的输入")
+
+
+def main(root: tk.Tk) -> App:
+    return App(root)

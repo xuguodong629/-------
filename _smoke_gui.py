@@ -1,0 +1,137 @@
+# -*- coding: utf-8 -*-
+"""
+_smoke_gui.py —— GUI 构建冒烟测试（不弹窗、不启动 mainloop）
+运行：python _smoke_gui.py
+验证 8 个标签页与全部控件可正常构建（捕获构建期错误）。
+"""
+import os
+import sys
+import tempfile
+import tkinter as tk
+
+# 冒烟测试也写运行日志：指到临时目录，避免污染真实 _日志\
+os.environ.setdefault("KB_LOG_DIR", tempfile.mkdtemp(prefix="kb_smoke_log_"))
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
+import gui
+import core as core_mod
+
+EXPECTED_TABS = ["① 知识库设置", "② 类型映射", "③ AI 工作台", "④ 模板管理", "⑤ 索引与统计",
+                 "⑥ 整段粘贴导入", "⑦ 补充更新", "⑧ 批量建条"]
+
+root = tk.Tk()
+root.withdraw()  # 隐藏窗口
+app = gui.App(root)
+root.update_idletasks()
+print("GUI 构建 OK：", root.title())
+titles = [app.nb.tab(t, "text") for t in app.nb.tabs()]
+print("标签页数量：", len(titles))
+for t in titles:
+    print("  -", t)
+
+fails = []
+if len(titles) != len(EXPECTED_TABS):
+    fails.append(f"页签数量应为 {len(EXPECTED_TABS)}，实际 {len(titles)}")
+if titles != EXPECTED_TABS:
+    fails.append(f"页签顺序/文案不符：{titles}")
+
+# ⑧ 页控件齐全性
+for attr in ("sk_kw", "sk_tree", "sk_log", "sk_type_combo", "sk_dir_combo",
+             "sk_overwrite_var", "sk_limit_var",
+             "btn_sk_load", "btn_sk_preview", "btn_sk_create"):
+    if not hasattr(app, attr):
+        fails.append(f"⑧ 页缺少控件：{attr}")
+
+# ⑥ 页「📄 从 md 文档批量建库」控件齐全性
+for attr in ("md_tree", "md_file_var", "md_level_var", "md_type_combo", "md_dl_img_var",
+             "btn_md_pick", "btn_md_preview", "btn_md_create", "man_log", "man_content"):
+    if not hasattr(app, attr):
+        fails.append(f"⑥ 页缺少控件：{attr}")
+if getattr(app, "MD_LEVEL_AUTO", "") != "自动":
+    fails.append("⑥ 页标题级别下拉缺少「自动」项")
+if hasattr(app, "md_tree") and list(app.md_tree["columns"]) != ["name", "type", "dir", "chars"]:
+    fails.append(f"⑥ 页 md 词条表列不符：{list(app.md_tree['columns'])}")
+if hasattr(app, "md_type_combo") and "（自动识别）" not in list(app.md_type_combo["values"]):
+    fails.append("⑥ 页 md 默认类型下拉没有「（自动识别）」")
+
+# ② 页「🔁 按当前知识库重排映射」按钮
+if not hasattr(app, "btn_remap"):
+    fails.append("② 页缺少控件：btn_remap（按当前知识库重排映射）")
+elif "重排映射" not in str(app.btn_remap.cget("text")):
+    fails.append(f"② 页重排按钮文案不符：{app.btn_remap.cget('text')}")
+if not hasattr(app, "open_route_suggest"):
+    fails.append("② 页缺少方法：open_route_suggest")
+
+# ② 页「⛏ 重挖类型关键词」按钮（只读挖掘 + 预览确认后才写）
+if not hasattr(app, "btn_mine_kw"):
+    fails.append("② 页缺少控件：btn_mine_kw（重挖类型关键词）")
+elif "重挖" not in str(app.btn_mine_kw.cget("text")):
+    fails.append(f"② 页重挖关键词按钮文案不符：{app.btn_mine_kw.cget('text')}")
+if not hasattr(app, "do_mine_keywords") or not hasattr(app, "_on_mine_keywords_done"):
+    fails.append("② 页缺少方法：do_mine_keywords / _on_mine_keywords_done")
+
+# ② 页「🩺 类型判定体检」按钮（只读体检 + 预览确认后才写）
+if not hasattr(app, "btn_audit_types"):
+    fails.append("② 页缺少控件：btn_audit_types（类型判定体检）")
+elif "体检" not in str(app.btn_audit_types.cget("text")):
+    fails.append(f"② 页类型判定体检按钮文案不符：{app.btn_audit_types.cget('text')}")
+if not hasattr(app, "do_audit_types") or not hasattr(app, "_on_audit_types_done"):
+    fails.append("② 页缺少方法：do_audit_types / _on_audit_types_done")
+
+# ④ 页「每个类型用哪个模板」表 + 「补齐缺失模板」按钮
+for attr in ("tpl_map_tree", "btn_tpl_paste"):
+    if not hasattr(app, attr):
+        fails.append(f"④ 页缺少控件：{attr}")
+if hasattr(app, "tpl_map_tree"):
+    cols = list(app.tpl_map_tree["columns"])
+    if cols != ["type", "tpl", "note"]:
+        fails.append(f"④ 页模板指向表列不符：{cols}")
+    rows = [app.tpl_map_tree.item(i, "values")[0] for i in app.tpl_map_tree.get_children()]
+    if not rows:
+        fails.append("④ 页模板指向表没有行（应按类型列出）")
+if not hasattr(app, "refresh_tpl_map") or not hasattr(app, "do_paste_template"):
+    fails.append("④ 页缺少方法：refresh_tpl_map / do_paste_template（粘贴模板）")
+
+# ⑤ 页「🩺 语法体检」按钮（零 token、只读）
+if not hasattr(app, "btn_syntax"):
+    fails.append("⑤ 页缺少控件：btn_syntax（语法体检）")
+elif "语法体检" not in str(app.btn_syntax.cget("text")):
+    fails.append(f"⑤ 页语法体检按钮文案不符：{app.btn_syntax.cget('text')}")
+if not hasattr(app, "do_syntax_check") or not hasattr(app, "_on_syntax_done"):
+    fails.append("⑤ 页缺少方法：do_syntax_check / _on_syntax_done")
+
+# ⑥⑦⑧ 页「当前知识库」提示条 + ⑧ 页"默认值"控制（防"写进错库/错目录"）
+if not hasattr(app, "_build_kb_banner") or not hasattr(app, "refresh_kb_banners"):
+    fails.append("缺少方法：_build_kb_banner / refresh_kb_banners（当前知识库提示条）")
+if not hasattr(app, "do_switch_kb_dialog"):
+    fails.append("缺少方法：do_switch_kb_dialog（提示条上的切换知识库）")
+if not hasattr(app, "_mark_kb_edited"):
+    fails.append("缺少方法：_mark_kb_edited（记录最近写入的库）")
+banners = getattr(app, "_kb_banner_vars", None)
+if not isinstance(banners, dict) or set(banners) != {"manual", "update", "skeleton"}:
+    fails.append(f"⑥⑦⑧ 页提示条未全部建立：{sorted(banners) if isinstance(banners, dict) else banners}")
+else:
+    for key, var in banners.items():
+        if not str(var.get()).strip():
+            fails.append(f"{key} 页提示条没有显示当前知识库")
+for attr in ("btn_sk_reset_defaults", "btn_sk_use_detected", "sk_conflict_var"):
+    if not hasattr(app, attr):
+        fails.append(f"⑧ 页缺少控件：{attr}")
+if not hasattr(app, "reset_sk_defaults") or not hasattr(app, "use_sk_detected"):
+    fails.append("⑧ 页缺少方法：reset_sk_defaults / use_sk_detected")
+if not hasattr(core_mod, "note_display_path") or not hasattr(core_mod, "detect_type_conflict"):
+    fails.append("core 缺少方法：note_display_path / detect_type_conflict")
+if not hasattr(core_mod, "misplaced_notes"):
+    fails.append("core 缺少方法：misplaced_notes（错位笔记体检）")
+
+root.destroy()
+if fails:
+    print("冒烟测试失败：")
+    for f in fails:
+        print("  ✗", f)
+    sys.exit(1)
+print("冒烟测试通过")

@@ -1,0 +1,172 @@
+# -*- coding: utf-8 -*-
+"""骨架目录纠正：找出"今天新建、且目录与判定 v3 不一致"的骨架。
+默认**只预览**（--apply 才搬移，且搬前备份、目标目录必须已存在、只移动不改内容）。"""
+import argparse, datetime, shutil, sys
+from pathlib import Path
+import core
+
+KBS = [
+    r"G:\个人文件\知识库-历史\00-Inbox\历史\06第一帝国时代\06-02两汉",
+    r"G:\个人文件\知识库-历史\00-Inbox\历史\06第一帝国时代\06-03两晋",
+    r"G:\个人文件\知识库-历史\00-Inbox\历史\06第一帝国时代\06-04十六国南北朝",
+    r"G:\个人文件\知识库-历史\00-Inbox\历史\19民国",
+]
+
+
+def is_skeleton(p: Path) -> bool:
+    try:
+        t = p.read_text(encoding="utf-8")
+    except Exception:
+        return False
+    return "<!-- TODO: 待补 -->" in t
+
+
+def misplaced_main(a, cfg0) -> int:
+    """`--misplaced`：**全库**错位笔记体检（拿各类型目录里已有笔记名当标准答案跑判定）。
+
+    默认**只打印** ✓；`--apply` 才搬移（搬前备份、目标目录必须已存在、同名跳过、只移动不改内容 ✓）。
+    返回"高置信度错位"的条数（供调用方决定退出码）。
+    """
+    only = [x.strip() for x in a.dirs.split(",") if x.strip()]
+    all_high = 0
+    for kbp in KBS:
+        kb = Path(kbp)
+        if not kb.is_dir() or (only and not any(o in kb.name for o in only)):
+            continue
+        cfg = dict(cfg0)
+        cfg["knowledge_base"] = str(kb)
+        prof = core.get_kb_profile(cfg, kb)
+        for k in ("routes", "footer_types", "type_keywords"):
+            if prof.get(k) is not None:
+                cfg[k] = prof[k]
+        rep = core.misplaced_notes(cfg, kb=kb)
+        high, blank = rep["high"], rep["blank"]
+        all_high += len(high)
+        print(f"\n=== {kb.name} ===")
+        print(f"   扫描 {rep['scanned']} 篇｜判对 {rep['correct']}｜准确率 "
+              f"{rep['accuracy'] * 100:.1f}%｜高置信错位 {len(high)}｜判不出 {len(blank)}")
+        if not high:
+            print("   ✓ 没有高置信度错位")
+            continue
+        routes = dict(cfg.get("routes") or {})
+        for w in high[:a.limit or len(high)]:
+            tgt_rel = str(routes.get(w["guessed"]) or "")
+            tgt_dir = kb / tgt_rel if tgt_rel else None
+            ok = bool(tgt_dir and tgt_dir.is_dir())
+            print(f"   · {w['file'] or w['name']}")
+            print(f"        现目录 {w['expected']} → 判定 {w['guessed']}（{w['score']} 分）"
+                  f"｜建议去处 {tgt_rel or '（该库无此类型）'}"
+                  + ("" if ok else " ✗目标目录不存在（不搬）"))
+            if a.apply and ok:
+                src = kb / (w["file"] or "")
+                tgt = tgt_dir / src.name if src.is_file() else None
+                if src.is_file() and tgt is not None:
+                    if tgt.exists():
+                        print("        跳过（目标已存在同名）")
+                        continue
+                    rel = src.relative_to(kb)
+                    bak = core.app_dir() / "_备份" / "错位搬移前" / kb.name / rel
+                    bak.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, bak)
+                    before = src.read_text(encoding="utf-8")
+                    shutil.move(str(src), str(tgt))
+                    assert tgt.read_text(encoding="utf-8") == before, "内容发生变化！"
+                    print(f"        已移动 → {tgt_rel}\\{src.name}")
+    if not a.apply:
+        print("\n（预览模式：未移动任何文件。确认后再加 --apply 执行 ✓）")
+    return all_high
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--days", type=int, default=1, help="只看最近 N 天修改过的文件")
+    ap.add_argument("--dirs", default="", help="只处理这些知识库（逗号分隔的名字片段）")
+    ap.add_argument("--misplaced", action="store_true",
+                    help="全库错位笔记体检（只读；配 --apply 才搬移）")
+    ap.add_argument("--limit", type=int, default=0, help="每库最多列出多少条（0=全部）")
+    a = ap.parse_args()
+    if a.misplaced:
+        cfg0 = core.load_config()
+        n = misplaced_main(a, cfg0)
+        print(f"\n高置信度错位合计：{n} 条")
+        return
+    only = [x.strip() for x in a.dirs.split(",") if x.strip()]
+    since = datetime.datetime.now() - datetime.timedelta(days=a.days)
+    cfg0 = core.load_config()
+    total = moved = skipped = 0
+    plan = []
+    for kbp in KBS:
+        kb = Path(kbp)
+        if not kb.is_dir():
+            continue
+        if only and not any(o in kb.name for o in only):
+            continue
+        cfg = dict(cfg0); cfg["knowledge_base"] = str(kb)
+        prof = core.get_kb_profile(cfg, kb)
+        for k in ("routes", "footer_types", "type_keywords"):
+            if prof.get(k) is not None:
+                cfg[k] = prof[k]
+        routes = dict(cfg.get("routes") or {})
+        rev = {core.normalize_dir_name(str(v)): t for t, v in routes.items()}
+        for p in sorted(kb.rglob("*.md")):
+            if core._is_skipped_path(p) or core.is_non_entry_title(p.stem):
+                continue
+            try:
+                mtime = datetime.datetime.fromtimestamp(p.stat().st_mtime)
+            except Exception:
+                continue
+            if mtime < since:
+                continue
+            if not is_skeleton(p):
+                continue
+            total += 1
+            try:
+                cur_rel = str(p.parent.relative_to(kb))
+            except Exception:
+                cur_rel = p.parent.name
+            sug = core.suggest_type_for_kb(cfg, p.stem)
+            tgt_rel = str(routes.get(sug) or "")
+            same = core.normalize_dir_name(cur_rel) == core.normalize_dir_name(tgt_rel)
+            if not sug or not tgt_rel or same:
+                skipped += 1
+                continue
+            tgt_dir = kb / tgt_rel
+            plan.append((kb, p, cur_rel, tgt_rel, sug, tgt_dir.is_dir()))
+
+    print(f"扫描最近 {a.days} 天：骨架 {total} 篇，其中判定与目录不一致 {len(plan)} 篇"
+          f"（一致/判不出 {skipped} 篇）")
+    print("")
+    print("方案表：")
+    for kb, p, cur_rel, tgt_rel, sug, exists in plan:
+        flag = "✓" if exists else "✗目标目录不存在（跳过）"
+        print(f"   {kb.name}\\{p.relative_to(kb)}")
+        print(f"        现目录 {cur_rel} → 新目录 {tgt_rel}（判定：{sug}）  {flag}")
+    if not a.apply:
+        print("\n（预览模式：未移动任何文件。加 --apply 才执行）")
+        return
+    # 执行
+    for kb, p, cur_rel, tgt_rel, sug, exists in plan:
+        if not exists:
+            skipped += 1
+            continue
+        tgt = kb / tgt_rel / p.name
+        if tgt.exists():
+            print(f"   跳过（目标已存在同名）：{tgt_rel}/{p.name}")
+            skipped += 1
+            continue
+        rel = p.relative_to(kb)
+        bak = core.app_dir() / "_备份" / "骨架目录纠正前" / kb.name / rel
+        bak.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(p, bak)
+        before = p.read_text(encoding="utf-8")
+        shutil.move(str(p), str(tgt))
+        after = tgt.read_text(encoding="utf-8")
+        assert before == after, "内容发生变化！"
+        moved += 1
+        print(f"   已移动：{rel} → {tgt_rel}\\{p.name}")
+    print(f"\n搬移完成：{moved} 篇（跳过 {skipped} 篇）；备份在 _备份\\骨架目录纠正前\\<库名>\\<原路径>")
+
+
+if __name__ == "__main__":
+    main()

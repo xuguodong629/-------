@@ -1,0 +1,1559 @@
+==== 批量补齐开始 G:\个人文件\徐国栋个人知识库\00-Inbox\历史 ====
+[SKIP] 19民国\04 军队与军事院校\04军队与军事院校.md — 无空内容
+[SKIP] 19民国\05 国民党全史\军统.md — 无空内容
+[ERR] 19民国\02 人物图谱\丁日昌.md — PermissionError: [Errno 13] Permission denied: 'G:\\个人文件\\徐国栋个人知识库\\00-Inbox\\历史\\19民国\\02 人物图谱\\丁日昌.md'
+[ERR] 19民国\03 派系图谱\东北军.md — PermissionError: [Errno 13] Permission denied: 'G:\\个人文件\\徐国栋个人知识库\\00-Inbox\\历史\\19民国\\03 派系图谱\\东北军.md'
+[ERR] 19民国\01 时间线\1881年-袁世凯投身淮军.md — PermissionError: [Errno 13] Permission denied: 'G:\\个人文件\\徐国栋个人知识库\\00-Inbox\\历史\\19民国\\01 时间线\\1881年-袁世凯投身淮军.md'
+==== 完成：共5条，填充0，跳过2，错误3，用时220s （日志：补齐日志.txt，备份：_备份_历史补齐）====
+==== 批量补齐开始 G:\个人文件\徐国栋个人知识库\00-Inbox\历史 ====
+==== 批量补齐开始 G:\个人文件\徐国栋个人知识库\00-Inbox\历史 ====
+==== 批量补齐开始 G:\个人文件\徐国栋个人知识库\00-Inbox\历史 ====
+[SKIP] 19民国\02 人物图谱\丁日昌.md — 无空内容
+[SKIP] 19民国\01 时间线\1881年-袁世凯投身淮军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\东北军.md — 无空内容
+[SKIP] 19民国\04 军队与军事院校\04军队与军事院校.md — 无空内容
+[FLAG] 19民国\05 国民党全史\军统.md — 结构异常（无标题/frontmatter），需人工处理
+==== 完成：共5条，填充0，跳过4，标记1，错误0，用时0s（日志：补齐日志.txt，备份：_备份_历史补齐）====
+==== 批量补齐开始 G:\个人文件\徐国栋个人知识库\00-Inbox\历史 ====
+[OK] 19民国\04 军队与军事院校\04军队与军事院校.md — 填充3节/frontmatter0字段
+[OK] 19民国\02 人物图谱\丁日昌.md — 填充3节/frontmatter0字段
+[OK] 19民国\03 派系图谱\东北抗联.md — 填充19节/frontmatter4字段
+[OK] 19民国\01 时间线\1882年-壬午兵变.md — 填充0节/frontmatter4字段；丢弃AI无关小节['### 人物', '### 事件', '### 前置事件']
+==== 完成：共4条，填充4，跳过0，标记0，错误0，用时105s（日志：补齐日志.txt，备份：_备份_历史补齐）====
+==== 批量补齐开始 G:\个人文件\徐国栋个人知识库\00-Inbox\历史 ====
+[OK] 19民国\01 时间线\1887年-台湾建省.md — 填充1节/frontmatter5字段；丢弃AI无关小节['## 二、历史背景\n### 国内背景', '## 三、事件经过\n### 起因', '## 三、事件经过\n### 发展']
+[OK] 19民国\01 时间线\1888年-北洋水师成军.md — 填充1节/frontmatter5字段；丢弃AI无关小节['## 二、历史背景\n### 国内背景', '## 三、事件经过\n### 起因', '## 三、事件经过\n### 发展']
+[OK] 19民国\00 首页\激荡风云70年-从晚清到台湾（1881–1949） 1.md — 填充1节/frontmatter0字段
+[OK] 19民国\01 时间线\1885年-中法战争与清廷加强台湾防务.md — 填充0节/frontmatter2字段；丢弃AI无关小节['### 事件', '### 后续事件']
+==== 批量补齐开始 G:\个人文件\徐国栋个人知识库\00-Inbox\历史 ====
+[OK] 19民国\01 时间线\1890年-湖广总督张之洞推动洋务.md — 填充6节/frontmatter5字段
+[OK] 19民国\01 时间线\1889年-张之洞督粤与洋务格局变化.md — 填充6节/frontmatter5字段
+[OK] 19民国\01 时间线\1883年-中法战争前夜.md — 填充0节/frontmatter2字段
+[OK] 19民国\01 时间线\1894年-甲午战争.md — 填充6节/frontmatter5字段
+[OK] 19民国\01 时间线\1891年-清廷洋务运动进入调整期.md — 填充0节/frontmatter5字段
+[OK] 19民国\01 时间线\1886年-北洋势力继续扩张.md — 填充10节/frontmatter5字段
+[OK] 19民国\01 时间线\1892年-袁世凯继续经营朝鲜.md — 填充0节/frontmatter0字段
+[OK] 19民国\01 时间线\1884年-甲申政变.md — 填充6节/frontmatter5字段
+[OK] 19民国\01 时间线\1895年-小站练兵.md — 填充10节/frontmatter5字段
+[OK] 19民国\01 时间线\1898年-戊戌变法.md — 填充6节/frontmatter5字段
+[OK] 19民国\01 时间线\1899年-袁世凯出任山东巡抚.md — 填充6节/frontmatter5字段
+[OK] 19民国\01 时间线\1896年-中日马关条约后的中国变局.md — 填充10节/frontmatter5字段
+[OK] 19民国\01 时间线\1902年-清末新政启动.md — 填充0节/frontmatter5字段
+[OK] 19民国\01 时间线\1901年-辛丑条约.md — 填充0节/frontmatter5字段
+[OK] 19民国\01 时间线\1905年-中国同盟会成立.md — 填充5节/frontmatter5字段；丢弃AI无关小节['### 参考资料']
+[OK] 19民国\01 时间线\1900年-义和团与八国联军.md — 填充6节/frontmatter5字段
+[OK] 19民国\01 时间线\1903年-清廷大规模编练新军.md — 填充10节/frontmatter5字段
+[OK] 19民国\01 时间线\1904年-日俄战争.md — 填充5节/frontmatter5字段
+[OK] 19民国\01 时间线\1897年-德国强占胶州湾.md — 填充6节/frontmatter5字段
+[OK] 19民国\01 时间线\1910年-国会请愿运动.md — 填充6节/frontmatter5字段
+[OK] 19民国\01 时间线\1906年-预备立宪.md — 填充10节/frontmatter5字段
+[OK] 19民国\01 时间线\1912年-中华民国成立.md — 填充5节/frontmatter5字段
+[OK] 19民国\01 时间线\1911年-武昌起义.md — 填充6节/frontmatter5字段
+[OK] 19民国\01 时间线\1908年-光绪与慈禧相继去世.md — 填充0节/frontmatter0字段
+[OK] 19民国\01 时间线\1907年-袁世凯离开直隶.md — 填充6节/frontmatter5字段
+[OK] 19民国\01 时间线\1893年-袁世凯升任温处道.md — 填充0节/frontmatter5字段
+[OK] 19民国\01 时间线\1913年-宋教仁遇刺与二次革命.md — 填充5节/frontmatter5字段
+[OK] 19民国\01 时间线\1909年-各省咨议局成立.md — 填充6节/frontmatter5字段
+[OK] 19民国\01 时间线\1917年-张勋复辟.md — 填充10节/frontmatter5字段
+[OK] 19民国\01 时间线\1915年-袁世凯称帝.md — 填充0节/frontmatter5字段
+[OK] 19民国\01 时间线\1916年-护国战争与袁世凯病逝.md — 填充10节/frontmatter5字段
+[OK] 19民国\01 时间线\1919年-五四运动.md — 填充0节/frontmatter5字段
+[OK] 19民国\01 时间线\1914年-袁氏约法.md — 填充0节/frontmatter0字段
+[OK] 19民国\01 时间线\1921年-中国共产党成立.md — 填充0节/frontmatter5字段
+[OK] 19民国\01 时间线\1918年-第一次世界大战结束与北洋政局变化.md — 填充0节/frontmatter5字段
+[OK] 19民国\01 时间线\1923年-曹锟贿选.md — 填充0节/frontmatter0字段
+==== 批量补齐开始 G:\个人文件\徐国栋个人知识库\00-Inbox\历史 ====
+[OK] 19民国\01 时间线\1924年-第二次直奉战争与北京政变.md — 填充6节/frontmatter5字段
+[OK] 19民国\01 时间线\1920年-直皖战争.md — 填充6节/frontmatter5字段
+[OK] 19民国\01 时间线\1925年-孙中山逝世与国民革命兴起.md — 填充6节/frontmatter5字段
+[OK] 19民国\01 时间线\1928年-东北易帜.md — 填充1节/frontmatter5字段；丢弃AI无关小节['## 二、历史背景\n### 国内背景', '## 三、事件经过\n### 起因', '## 三、事件经过\n### 发展']
+[OK] 19民国\01 时间线\1927年-四一二政变与国共分裂.md — 填充0节/frontmatter0字段
+[OK] 19民国\01 时间线\1922年-第一次直奉战争.md — 填充0节/frontmatter5字段
+[OK] 19民国\01 时间线\1926年-北伐战争.md — 填充6节/frontmatter5字段
+[OK] 19民国\01 时间线\1931年-九一八事变.md — 填充0节/frontmatter0字段
+[OK] 19民国\01 时间线\1929年-国民党内部派系冲突.md — 填充10节/frontmatter5字段
+[OK] 19民国\01 时间线\1936年-西安事变.md — 填充6节/frontmatter5字段
+[OK] 19民国\01 时间线\1930年-中原大战.md — 填充6节/frontmatter5字段
+[OK] 19民国\01 时间线\1937年-七七事变.md — 填充6节/frontmatter5字段
+[OK] 19民国\01 时间线\1938年-武汉会战与抗战进入相持阶段.md — 填充6节/frontmatter5字段
+[OK] 19民国\01 时间线\1934年-中央红军长征.md — 填充5节/frontmatter5字段
+[OK] 19民国\01 时间线\1935年-遵义会议.md — 填充10节/frontmatter5字段
+[OK] 19民国\01 时间线\1932年-一二八事变.md — 填充0节/frontmatter5字段
+[OK] 19民国\01 时间线\1944年-豫湘桂会战.md — 填充6节/frontmatter5字段
+[OK] 19民国\01 时间线\1940年-百团大战.md — 填充10节/frontmatter5字段
+[OK] 19民国\01 时间线\1942年-延安整风.md — 填充10节/frontmatter5字段
+[OK] 19民国\01 时间线\1939年-国共摩擦加剧.md — 填充10节/frontmatter5字段
+[OK] 19民国\01 时间线\1946年-全面内战爆发.md — 填充5节/frontmatter5字段
+[OK] 19民国\02 人物图谱\丁汝昌.md — 填充14节/frontmatter4字段
+[OK] 19民国\01 时间线\1945年-抗日战争胜利.md — 填充5节/frontmatter5字段
+[OK] 19民国\01 时间线\1948年-三大战役.md — 填充10节/frontmatter5字段
+[OK] 19民国\01 时间线\1941年-皖南事变与太平洋战争.md — 填充6节/frontmatter5字段
+==== 批量补齐开始 G:\个人文件\徐国栋个人知识库\00-Inbox\历史 ====
+[OK] 19民国\01 时间线\1933年-塘沽协定.md — 填充5节/frontmatter5字段；丢弃AI无关小节['### 参考资料']
+[OK] 19民国\01 时间线\1947年-刘邓大军挺进大别山.md — 填充6节/frontmatter5字段
+[OK] 19民国\02 人物图谱\乃木希典.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\东条英机.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\丘吉尔.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\何香凝.md — 填充14节/frontmatter4字段
+[OK] 19民国\01 时间线\1943年-中共根据地发展与国民党统治危机.md — 填充10节/frontmatter5字段
+[OK] 19民国\02 人物图谱\伊藤博文.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\佟麟阁.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\严复.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\光绪帝.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\何应钦.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\冈村宁次.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\东乡平八郎.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\任弼时.md — 填充0节/frontmatter0字段
+[OK] 19民国\02 人物图谱\冯玉祥.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\傅作义.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\刘坤一.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\冯国璋.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\博古.md — 填充14节/frontmatter4字段
+[OK] 19民国\01 时间线\1949年-渡江战役与中华人民共和国成立.md — 填充5节/frontmatter5字段
+[OK] 19民国\02 人物图谱\刘少奇.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\刘步蟾.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\刘伯承.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\华蘅芳.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\卢永祥.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\刘铭传.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\卫立煌.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\唐廷枢.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\叶挺.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\土肥原贤二.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\唐继尧.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\唐景崧.md — 填充13节/frontmatter4字段；丢弃AI无关小节['### 参考资料']
+[OK] 19民国\02 人物图谱\傅斯年.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\周恩来.md — 填充14节/frontmatter4字段
+==== 批量补齐开始 G:\个人文件\徐国栋个人知识库\00-Inbox\历史 ====
+[OK] 19民国\02 人物图谱\周保中.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\吴佩孚.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\广田弘毅.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\宣统帝.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\宋子文.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\宋美龄.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\孙立人.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\山县有朋.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\左宗棠.md — 填充0节/frontmatter4字段；丢弃AI无关小节['### 关键事件', '### 关联人物', '### 关联组织']
+[OK] 19民国\02 人物图谱\岑春煊.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\孙中山.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\庆亲王奕劻.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\张之洞.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\宋教仁.md — 填充0节/frontmatter0字段
+[OK] 19民国\02 人物图谱\张学良.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\张闻天.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\张群.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\张自忠.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\廖仲恺.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\彭德怀.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\张国焘.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\康有为.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\张勋.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\徐锡麟.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\张作霖.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\慈禧太后.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\张宗昌.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\戴笠.md — 填充10节/frontmatter4字段
+[OK] 19民国\02 人物图谱\徐向前.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\戴季陶.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\曾国荃.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\徐世昌.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\徐寿.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\孔祥熙.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\曾国藩.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\李福林.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\曹锟.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\斯大林.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\明治天皇.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\李莲英.md — 填充8节/frontmatter4字段
+[SKIP] 19民国\02 人物图谱\朱德.md — AI 未产出可填入内容
+[OK] 19民国\02 人物图谱\李宗仁.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\本庄繁.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\杨虎城.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\杨靖宇.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\板垣征四郎.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\李德.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\宋庆龄.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\杜聿明.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\梅津美治郎.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\段芝贵.md — 填充0节/frontmatter4字段
+[OK] 19民国\02 人物图谱\林永升.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\梁启超.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\段祺瑞.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\汪精卫.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\盛宣怀.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\王尽美.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\林彪.md — 填充0节/frontmatter0字段
+[OK] 19民国\02 人物图谱\李鸿章.md — 填充0节/frontmatter4字段；丢弃AI无关小节['### 六、历史评价']
+[OK] 19民国\02 人物图谱\毛泽东.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\松冈洋右.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\王占元.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\沈葆桢.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\粟裕.md — 填充0节/frontmatter0字段
+[OK] 19民国\02 人物图谱\罗斯福.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\秋瑾.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\王明.md — 填充0节/frontmatter0字段
+[OK] 19民国\02 人物图谱\章太炎.md — 填充0节/frontmatter4字段
+[OK] 19民国\02 人物图谱\杨尚昆.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\李大钊.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\胡汉民.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\石原莞尔.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\端方.md — 填充0节/frontmatter0字段
+[ERR] 19民国\02 人物图谱\白崇禧.md — AttributeError: 'str' object has no attribute 'items'
+[OK] 19民国\02 人物图谱\瞿秋白.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\聂荣臻.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\胡林翼.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\荣禄.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\詹天佑.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\罗家伦.md — 填充0节/frontmatter0字段
+[OK] 19民国\02 人物图谱\董必武.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\罗荣桓.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\薛岳.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\胡适.md — 填充0节/frontmatter0字段
+[OK] 19民国\02 人物图谱\谭嗣同.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\蒋介石.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\蔡锷.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\邓世昌.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\蔡元培.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\贺龙.md — 填充0节/frontmatter0字段
+[ERR] 19民国\02 人物图谱\昭和天皇.md — AIError: 请求失败：The read operation timed out
+[OK] 19民国\02 人物图谱\赵尚志.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\谭震林.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\邹容.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\赵登禹.md — 填充0节/frontmatter0字段
+[OK] 19民国\02 人物图谱\铁良.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\醇亲王载沣.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\陆荣廷.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\陈天华.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\阎锡山.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\邓小平.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\陈潭秋.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\近卫文麿.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\袁世凯.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\谭延闿.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\阿南惟几.md — 填充20节/frontmatter4字段
+[SKIP] 19民国\02 人物图谱\陈其美.md — AI 未产出可填入内容
+[OK] 19民国\02 人物图谱\陈毅.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\陈立夫.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\陈济棠.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\闻一多.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\陈赓.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\黎元洪.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\陈独秀.md — 填充20节/frontmatter4字段
+[SKIP] 19民国\03 派系图谱\军统.md — 无空内容
+[OK] 19民国\02 人物图谱\陈果夫.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\黄兴.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\顾祝同.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\陆奥宗光.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\马占山.md — 填充0节/frontmatter0字段
+[OK] 19民国\02 人物图谱\邓恩铭.md — 填充14节/frontmatter4字段
+[OK] 19民国\02 人物图谱\麦克阿瑟.md — 填充20节/frontmatter4字段
+[OK] 19民国\02 人物图谱\鲁迅.md — 填充20节/frontmatter4字段
+[OK] 19民国\03 派系图谱\北洋水师.md — 填充8节/frontmatter5字段
+[OK] 19民国\02 人物图谱\龙云.md — 填充20节/frontmatter4字段
+[OK] 19民国\03 派系图谱\反袁力量.md — 填充0节/frontmatter0字段
+[OK] 19民国\03 派系图谱\五四运动.md — 填充20节/frontmatter5字段
+[OK] 19民国\03 派系图谱\北洋系.md — 填充29节/frontmatter4字段
+[OK] 19民国\03 派系图谱\国民革命.md — 填充19节/frontmatter5字段
+[OK] 19民国\03 派系图谱\国民党军.md — 填充25节/frontmatter4字段
+[OK] 19民国\03 派系图谱\军部.md — 填充20节/frontmatter5字段
+[OK] 19民国\03 派系图谱\国民党.md — 填充0节/frontmatter0字段
+[OK] 19民国\02 人物图谱\陈炯明.md — 填充14节/frontmatter4字段
+[OK] 19民国\03 派系图谱\地方实力派.md — 填充26节/frontmatter5字段
+[OK] 19民国\03 派系图谱\中国.md — 填充20节/frontmatter5字段
+[OK] 19民国\03 派系图谱\教育界.md — 填充20节/frontmatter5字段
+[OK] 19民国\03 派系图谱\新文化知识界.md — 填充19节/frontmatter5字段
+[OK] 19民国\03 派系图谱\技术官僚.md — 填充26节/frontmatter5字段
+[OK] 19民国\03 派系图谱\中国共产党.md — 填充26节/frontmatter5字段
+[OK] 19民国\03 派系图谱\启蒙派.md — 填充0节/frontmatter5字段
+[OK] 19民国\03 派系图谱\新四军.md — 填充25节/frontmatter4字段
+[OK] 19民国\03 派系图谱\奉系.md — 填充19节/frontmatter3字段
+[OK] 19民国\03 派系图谱\晋系.md — 填充26节/frontmatter5字段
+[OK] 19民国\03 派系图谱\地方督抚.md — 填充26节/frontmatter5字段
+[OK] 19民国\03 派系图谱\派系总览.md — 填充0节/frontmatter0字段
+[OK] 19民国\03 派系图谱\洋务派.md — 填充26节/frontmatter5字段
+[OK] 19民国\03 派系图谱\清军.md — 填充20节/frontmatter5字段
+[OK] 19民国\03 派系图谱\日本陆军.md — 填充25节/frontmatter4字段
+[OK] 19民国\03 派系图谱\日本海军.md — 填充25节/frontmatter4字段
+[OK] 19民国\03 派系图谱\日本军部.md — 填充26节/frontmatter5字段
+[OK] 19民国\03 派系图谱\桂系.md — 填充26节/frontmatter5字段
+[OK] 19民国\03 派系图谱\淮军.md — 填充26节/frontmatter5字段
+[OK] 19民国\03 派系图谱\直系.md — 填充18节/frontmatter4字段；丢弃AI无关小节['### 参考资料']
+[OK] 19民国\03 派系图谱\知识界.md — 填充8节/frontmatter5字段
+[OK] 19民国\03 派系图谱\湖北军政府.md — 填充26节/frontmatter5字段
+[OK] 19民国\03 派系图谱\日本皇室.md — 填充0节/frontmatter5字段
+[OK] 19民国\03 派系图谱\滇系.md — 填充26节/frontmatter5字段
+[OK] 19民国\03 派系图谱\粤军.md — 填充20节/frontmatter5字段
+[OK] 19民国\03 派系图谱\清廷.md — 填充20节/frontmatter5字段
+[OK] 19民国\03 派系图谱\湘军.md — 填充0节/frontmatter5字段
+[OK] 19民国\03 派系图谱\维新派.md — 填充0节/frontmatter5字段
+[OK] 19民国\03 派系图谱\皖系.md — 填充25节/frontmatter4字段
+[OK] 19民国\03 派系图谱\苏联.md — 填充20节/frontmatter5字段
+[OK] 19民国\07 国家制度与财政\各地讲武堂.md — 填充3节/frontmatter0字段
+[OK] 19民国\03 派系图谱\西北军.md — 填充26节/frontmatter5字段
+[OK] 19民国\03 派系图谱\粤系.md — 填充26节/frontmatter4字段
+[OK] 19民国\07 国家制度与财政\保定陆军军官学校.md — 填充3节/frontmatter0字段
+[OK] 19民国\03 派系图谱\英国.md — 填充26节/frontmatter5字段
+[OK] 19民国\03 派系图谱\革命派.md — 填充26节/frontmatter5字段
+[OK] 19民国\03 派系图谱\美国.md — 填充19节/frontmatter5字段
+[OK] 19民国\03 派系图谱\革命阵营.md — 填充20节/frontmatter5字段
+[OK] 19民国\03 派系图谱\日本政府.md — 填充0节/frontmatter0字段
+[OK] 19民国\03 派系图谱\自由主义知识界.md — 填充26节/frontmatter5字段
+==== 完成：共173条，填充168，跳过3，标记0，错误2，用时1478s（日志：补齐日志.txt，备份：_备份_历史补齐）====
+==== 批量补齐开始 G:\个人文件\徐国栋个人知识库\00-Inbox\历史 ====
+[SKIP] 19民国\00 首页\激荡风云70年-从晚清到台湾（1881–1949） 1.md — 无空内容
+[SKIP] 19民国\01 时间线\1895年-小站练兵.md — 无空内容
+[SKIP] 19民国\01 时间线\1882年-壬午兵变.md — 无空内容
+[SKIP] 19民国\01 时间线\1886年-北洋势力继续扩张.md — 无空内容
+[SKIP] 19民国\01 时间线\1896年-中日马关条约后的中国变局.md — 无空内容
+[SKIP] 19民国\01 时间线\1885年-中法战争与清廷加强台湾防务.md — 无空内容
+[SKIP] 19民国\01 时间线\1883年-中法战争前夜.md — 无空内容
+[OK] 19民国\01 时间线\1888年-北洋水师成军.md — 填充5节/frontmatter0字段
+[OK] 19民国\01 时间线\1901年-辛丑条约.md — 填充6节/frontmatter0字段
+[SKIP] 19民国\01 时间线\1903年-清廷大规模编练新军.md — 无空内容
+[OK] 19民国\01 时间线\1891年-清廷洋务运动进入调整期.md — 填充6节/frontmatter0字段
+[OK] 19民国\01 时间线\1890年-湖广总督张之洞推动洋务.md — 填充4节/frontmatter0字段
+[SKIP] 19民国\01 时间线\1906年-预备立宪.md — 无空内容
+[OK] 19民国\01 时间线\1893年-袁世凯升任温处道.md — 填充10节/frontmatter0字段
+[OK] 19民国\01 时间线\1884年-甲申政变.md — 填充4节/frontmatter0字段
+[OK] 19民国\01 时间线\1900年-义和团与八国联军.md — 填充4节/frontmatter0字段
+[OK] 19民国\01 时间线\1887年-台湾建省.md — 填充9节/frontmatter0字段
+[OK] 19民国\01 时间线\1892年-袁世凯继续经营朝鲜.md — 填充0节/frontmatter5字段
+[ERR] 19民国\01 时间线\1909年-各省咨议局成立.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1911年-武昌起义.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1907年-袁世凯离开直隶.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1904年-日俄战争.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1908年-光绪与慈禧相继去世.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\01 时间线\1917年-张勋复辟.md — 无空内容
+[ERR] 19民国\01 时间线\1910年-国会请愿运动.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1899年-袁世凯出任山东巡抚.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1894年-甲午战争.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1889年-张之洞督粤与洋务格局变化.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1897年-德国强占胶州湾.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1898年-戊戌变法.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1902年-清末新政启动.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1912年-中华民国成立.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1905年-中国同盟会成立.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1913年-宋教仁遇刺与二次革命.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1914年-袁氏约法.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\01 时间线\1929年-国民党内部派系冲突.md — 无空内容
+[ERR] 19民国\01 时间线\1915年-袁世凯称帝.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1916年-护国战争与袁世凯病逝.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1918年-第一次世界大战结束与北洋政局变化.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1919年-五四运动.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1921年-中国共产党成立.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\01 时间线\1935年-遵义会议.md — 无空内容
+[ERR] 19民国\01 时间线\1920年-直皖战争.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1923年-曹锟贿选.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1924年-第二次直奉战争与北京政变.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\01 时间线\1939年-国共摩擦加剧.md — 无空内容
+[SKIP] 19民国\01 时间线\1940年-百团大战.md — 无空内容
+[ERR] 19民国\01 时间线\1922年-第一次直奉战争.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\01 时间线\1942年-延安整风.md — 无空内容
+[ERR] 19民国\01 时间线\1925年-孙中山逝世与国民革命兴起.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\01 时间线\1943年-中共根据地发展与国民党统治危机.md — 无空内容
+[ERR] 19民国\01 时间线\1927年-四一二政变与国共分裂.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1926年-北伐战争.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1928年-东北易帜.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\01 时间线\1948年-三大战役.md — 无空内容
+[ERR] 19民国\01 时间线\1930年-中原大战.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1931年-九一八事变.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\丘吉尔.md — 无空内容
+[ERR] 19民国\01 时间线\1932年-一二八事变.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\东条英机.md — 无空内容
+[SKIP] 19民国\02 人物图谱\严复.md — 无空内容
+[ERR] 19民国\01 时间线\1933年-塘沽协定.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1937年-七七事变.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1934年-中央红军长征.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1938年-武汉会战与抗战进入相持阶段.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\何应钦.md — 无空内容
+[ERR] 19民国\01 时间线\1941年-皖南事变与太平洋战争.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\傅作义.md — 无空内容
+[SKIP] 19民国\02 人物图谱\傅斯年.md — 无空内容
+[ERR] 19民国\01 时间线\1936年-西安事变.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1945年-抗日战争胜利.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\冯国璋.md — 无空内容
+[ERR] 19民国\01 时间线\1944年-豫湘桂会战.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1946年-全面内战爆发.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1947年-刘邓大军挺进大别山.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\刘少奇.md — 无空内容
+[SKIP] 19民国\02 人物图谱\刘步蟾.md — 无空内容
+[SKIP] 19民国\02 人物图谱\刘铭传.md — 无空内容
+[SKIP] 19民国\02 人物图谱\华蘅芳.md — 无空内容
+[ERR] 19民国\01 时间线\1949年-渡江战役与中华人民共和国成立.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\丁汝昌.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\卫立煌.md — 无空内容
+[ERR] 19民国\02 人物图谱\东乡平八郎.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\吴佩孚.md — 无空内容
+[SKIP] 19民国\02 人物图谱\周保中.md — 无空内容
+[ERR] 19民国\02 人物图谱\乃木希典.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\任弼时.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\冈村宁次.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\光绪帝.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\佟麟阁.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\伊藤博文.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\孙中山.md — 无空内容
+[SKIP] 19民国\02 人物图谱\孙立人.md — 无空内容
+[ERR] 19民国\02 人物图谱\刘伯承.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\宋庆龄.md — 无空内容
+[ERR] 19民国\02 人物图谱\何香凝.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\冯玉祥.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\宋美龄.md — 无空内容
+[ERR] 19民国\02 人物图谱\刘坤一.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\博古.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\左宗棠.md — 无空内容
+[ERR] 19民国\02 人物图谱\卢永祥.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\叶挺.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\康有为.md — 无空内容
+[ERR] 19民国\02 人物图谱\周恩来.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\张之洞.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张作霖.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张勋.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张国焘.md — 无空内容
+[ERR] 19民国\02 人物图谱\唐廷枢.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\唐景崧.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\张群.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张自忠.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张闻天.md — 无空内容
+[SKIP] 19民国\02 人物图谱\彭德怀.md — 无空内容
+[SKIP] 19民国\02 人物图谱\徐世昌.md — 无空内容
+[SKIP] 19民国\02 人物图谱\徐向前.md — 无空内容
+[SKIP] 19民国\02 人物图谱\徐寿.md — 无空内容
+[SKIP] 19民国\02 人物图谱\徐锡麟.md — 无空内容
+[SKIP] 19民国\02 人物图谱\慈禧太后.md — 无空内容
+[SKIP] 19民国\02 人物图谱\戴季陶.md — 无空内容
+[SKIP] 19民国\02 人物图谱\戴笠.md — 无空内容
+[SKIP] 19民国\02 人物图谱\斯大林.md — 无空内容
+[SKIP] 19民国\02 人物图谱\明治天皇.md — 无空内容
+[ERR] 19民国\02 人物图谱\宋子文.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\曹锟.md — 无空内容
+[SKIP] 19民国\02 人物图谱\曾国荃.md — 无空内容
+[ERR] 19民国\02 人物图谱\孔祥熙.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\唐继尧.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\李大钊.md — 无空内容
+[SKIP] 19民国\02 人物图谱\本庄繁.md — 无空内容
+[SKIP] 19民国\02 人物图谱\李德.md — 无空内容
+[SKIP] 19民国\02 人物图谱\李福林.md — 无空内容
+[ERR] 19民国\02 人物图谱\土肥原贤二.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\李鸿章.md — 无空内容
+[ERR] 19民国\02 人物图谱\宣统帝.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\宋教仁.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\山县有朋.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\岑春煊.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\广田弘毅.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\板垣征四郎.md — 无空内容
+[ERR] 19民国\02 人物图谱\庆亲王奕劻.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\林永升.md — 无空内容
+[SKIP] 19民国\02 人物图谱\梁启超.md — 无空内容
+[ERR] 19民国\02 人物图谱\廖仲恺.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\张学良.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\张宗昌.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\毛泽东.md — 无空内容
+[ERR] 19民国\02 人物图谱\昭和天皇.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\沈葆桢.md — 无空内容
+[ERR] 19民国\02 人物图谱\曾国藩.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\李宗仁.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\杜聿明.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\李莲英.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\杨尚昆.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\瞿秋白.md — 无空内容
+[SKIP] 19民国\02 人物图谱\石原莞尔.md — 无空内容
+[SKIP] 19民国\02 人物图谱\秋瑾.md — 无空内容
+[ERR] 19民国\02 人物图谱\杨虎城.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\杨靖宇.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\松冈洋右.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\林彪.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\梅津美治郎.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\罗荣桓.md — 无空内容
+[SKIP] 19民国\02 人物图谱\聂荣臻.md — 无空内容
+[ERR] 19民国\02 人物图谱\段祺瑞.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\段芝贵.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\汪精卫.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\王占元.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\董必武.md — 无空内容
+[SKIP] 19民国\02 人物图谱\蒋介石.md — 无空内容
+[ERR] 19民国\02 人物图谱\王明.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\盛宣怀.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\白崇禧.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\王尽美.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\端方.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\章太炎.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\粟裕.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\罗家伦.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\罗斯福.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\赵尚志.md — 无空内容
+[ERR] 19民国\02 人物图谱\胡林翼.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\近卫文麿.md — 无空内容
+[ERR] 19民国\02 人物图谱\胡汉民.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\邓小平.md — 无空内容
+[ERR] 19民国\02 人物图谱\胡适.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\荣禄.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\醇亲王载沣.md — 无空内容
+[SKIP] 19民国\02 人物图谱\铁良.md — 无空内容
+[SKIP] 19民国\02 人物图谱\闻一多.md — 无空内容
+[ERR] 19民国\02 人物图谱\蔡元培.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\阿南惟几.md — 无空内容
+[ERR] 19民国\02 人物图谱\蔡锷.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\袁世凯.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\谭嗣同.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\陈果夫.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈毅.md — 无空内容
+[ERR] 19民国\02 人物图谱\薛岳.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\詹天佑.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\谭延闿.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\陈独秀.md — 无空内容
+[ERR] 19民国\02 人物图谱\谭震林.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\贺龙.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\赵登禹.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\邓世昌.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\鲁迅.md — 无空内容
+[SKIP] 19民国\02 人物图谱\麦克阿瑟.md — 无空内容
+[SKIP] 19民国\02 人物图谱\黄兴.md — 无空内容
+[ERR] 19民国\02 人物图谱\邓恩铭.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\02 人物图谱\龙云.md — 无空内容
+[ERR] 19民国\02 人物图谱\邹容.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\阎锡山.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\陆奥宗光.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\陈炯明.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\陈潭秋.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\陆荣廷.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\03 派系图谱\北洋系.md — 无空内容
+[ERR] 19民国\02 人物图谱\陈天华.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\陈济棠.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\陈立夫.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\03 派系图谱\国民党军.md — 无空内容
+[ERR] 19民国\02 人物图谱\陈赓.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\02 人物图谱\顾祝同.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\03 派系图谱\地方督抚.md — 无空内容
+[ERR] 19民国\02 人物图谱\马占山.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\03 派系图谱\技术官僚.md — 无空内容
+[ERR] 19民国\02 人物图谱\黎元洪.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\03 派系图谱\新四军.md — 无空内容
+[ERR] 19民国\03 派系图谱\东北抗联.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\03 派系图谱\日本军部.md — 无空内容
+[ERR] 19民国\03 派系图谱\中国.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\03 派系图谱\日本海军.md — 无空内容
+[ERR] 19民国\03 派系图谱\中国共产党.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\03 派系图谱\日本陆军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\晋系.md — 无空内容
+[ERR] 19民国\03 派系图谱\五四运动.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\03 派系图谱\洋务派.md — 无空内容
+[ERR] 19民国\03 派系图谱\北洋水师.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\03 派系图谱\淮军.md — 无空内容
+[ERR] 19民国\03 派系图谱\军部.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\03 派系图谱\反袁力量.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\03 派系图谱\湖北军政府.md — 无空内容
+[ERR] 19民国\03 派系图谱\启蒙派.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\03 派系图谱\滇系.md — 无空内容
+[SKIP] 19民国\03 派系图谱\皖系.md — 无空内容
+[ERR] 19民国\03 派系图谱\国民党.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\03 派系图谱\国民革命.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\03 派系图谱\地方实力派.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\03 派系图谱\粤系.md — 无空内容
+[ERR] 19民国\03 派系图谱\奉系.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\03 派系图谱\教育界.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\03 派系图谱\新文化知识界.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\03 派系图谱\日本政府.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\03 派系图谱\英国.md — 无空内容
+[SKIP] 19民国\03 派系图谱\西北军.md — 无空内容
+[ERR] 19民国\03 派系图谱\日本皇室.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\03 派系图谱\桂系.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[SKIP] 19民国\07 国家制度与财政\保定陆军军官学校.md — 无空内容
+[SKIP] 19民国\07 国家制度与财政\各地讲武堂.md — 无空内容
+[ERR] 19民国\03 派系图谱\派系总览.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\03 派系图谱\清军.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\03 派系图谱\清廷.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\03 派系图谱\湘军.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\03 派系图谱\直系.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\03 派系图谱\知识界.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\03 派系图谱\粤军.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\03 派系图谱\维新派.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\03 派系图谱\美国.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\03 派系图谱\自由主义知识界.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\03 派系图谱\苏联.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\03 派系图谱\革命派.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\03 派系图谱\革命阵营.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+==== 完成：共272条，填充9，跳过106，标记0，错误157，用时262s（日志：补齐日志.txt，备份：_备份_历史补齐）====
+==== 批量补齐开始 G:\个人文件\徐国栋个人知识库\00-Inbox\历史 ====
+[SKIP] 19民国\01 时间线\1887年-台湾建省.md — 无空内容
+[SKIP] 19民国\01 时间线\1900年-义和团与八国联军.md — 无空内容
+[SKIP] 19民国\01 时间线\1890年-湖广总督张之洞推动洋务.md — 无空内容
+[SKIP] 19民国\01 时间线\1884年-甲申政变.md — 无空内容
+[SKIP] 19民国\01 时间线\1893年-袁世凯升任温处道.md — 无空内容
+[ERR] 19民国\01 时间线\1908年-光绪与慈禧相继去世.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1902年-清末新政启动.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1898年-戊戌变法.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1891年-清廷洋务运动进入调整期.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1888年-北洋水师成军.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1892年-袁世凯继续经营朝鲜.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1905年-中国同盟会成立.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1907年-袁世凯离开直隶.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1897年-德国强占胶州湾.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1901年-辛丑条约.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1894年-甲午战争.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1889年-张之洞督粤与洋务格局变化.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1904年-日俄战争.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+[ERR] 19民国\01 时间线\1899年-袁世凯出任山东巡抚.md — AIError: HTTP 402：{"code":30001,"message":"Sorry, your account balance is insufficient","data":null}
+==== 批量补齐开始 G:\个人文件\徐国栋个人知识库\00-Inbox\历史 ====
+[OK] 19民国\01 时间线\1891年-清廷洋务运动进入调整期.md — 填充4节/frontmatter0字段
+[OK] 19民国\01 时间线\1889年-张之洞督粤与洋务格局变化.md — 填充4节/frontmatter0字段
+[OK] 19民国\01 时间线\1894年-甲午战争.md — 填充4节/frontmatter0字段
+[OK] 19民国\01 时间线\1908年-光绪与慈禧相继去世.md — 填充5节/frontmatter5字段
+[OK] 19民国\01 时间线\1897年-德国强占胶州湾.md — 填充4节/frontmatter0字段
+[SKIP] 19民国\01 时间线\1899年-袁世凯出任山东巡抚.md — AI 未产出可填入内容
+[SKIP] 19民国\01 时间线\1901年-辛丑条约.md — AI 未产出可填入内容
+[OK] 19民国\01 时间线\1902年-清末新政启动.md — 填充4节/frontmatter0字段
+[OK] 19民国\01 时间线\1905年-中国同盟会成立.md — 填充5节/frontmatter0字段
+[OK] 19民国\01 时间线\1892年-袁世凯继续经营朝鲜.md — 填充5节/frontmatter0字段
+[OK] 19民国\01 时间线\1888年-北洋水师成军.md — 填充4节/frontmatter0字段
+[OK] 19民国\01 时间线\1904年-日俄战争.md — 填充4节/frontmatter0字段
+[OK] 19民国\01 时间线\1909年-各省咨议局成立.md — 填充4节/frontmatter0字段
+[OK] 19民国\01 时间线\1915年-袁世凯称帝.md — 填充5节/frontmatter0字段
+[OK] 19民国\01 时间线\1914年-袁氏约法.md — 填充5节/frontmatter5字段；丢弃AI无关小节['### 后续事件']
+[OK] 19民国\01 时间线\1919年-五四运动.md — 填充5节/frontmatter0字段
+[OK] 19民国\01 时间线\1922年-第一次直奉战争.md — 填充5节/frontmatter0字段；丢弃AI无关小节['### 参考资料']
+[OK] 19民国\01 时间线\1918年-第一次世界大战结束与北洋政局变化.md — 填充5节/frontmatter0字段
+[SKIP] 19民国\01 时间线\1911年-武昌起义.md — AI 未产出可填入内容
+[OK] 19民国\01 时间线\1913年-宋教仁遇刺与二次革命.md — 填充5节/frontmatter0字段
+[OK] 19民国\01 时间线\1920年-直皖战争.md — 填充4节/frontmatter0字段
+[OK] 19民国\01 时间线\1921年-中国共产党成立.md — 填充5节/frontmatter0字段；丢弃AI无关小节['### 参考资料']
+[OK] 19民国\01 时间线\1912年-中华民国成立.md — 填充5节/frontmatter0字段
+[OK] 19民国\01 时间线\1923年-曹锟贿选.md — 填充5节/frontmatter5字段
+[ERR] 19民国\01 时间线\1916年-护国战争与袁世凯病逝.md — AIError: HTTP 400：{"contentFilter":[{"level":1,"role":"user"}],"error":{"code":"1301","message":"系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。"}}
+[SKIP] 19民国\01 时间线\1924年-第二次直奉战争与北京政变.md — AI 未产出可填入内容
+[SKIP] 19民国\01 时间线\1930年-中原大战.md — AI 未产出可填入内容
+[SKIP] 19民国\01 时间线\1925年-孙中山逝世与国民革命兴起.md — AI 未产出可填入内容
+[OK] 19民国\01 时间线\1928年-东北易帜.md — 填充4节/frontmatter0字段
+[OK] 19民国\01 时间线\1927年-四一二政变与国共分裂.md — 填充4节/frontmatter5字段
+[OK] 19民国\01 时间线\1926年-北伐战争.md — 填充4节/frontmatter0字段
+[OK] 19民国\01 时间线\1898年-戊戌变法.md — 填充4节/frontmatter0字段
+[SKIP] 19民国\01 时间线\1933年-塘沽协定.md — AI 未产出可填入内容
+[SKIP] 19民国\01 时间线\1907年-袁世凯离开直隶.md — AI 未产出可填入内容
+[OK] 19民国\01 时间线\1932年-一二八事变.md — 填充5节/frontmatter0字段；丢弃AI无关小节['### 国际背景', '### 结果', '### 长期影响']
+[SKIP] 19民国\01 时间线\1937年-七七事变.md — AI 未产出可填入内容
+[OK] 19民国\01 时间线\1931年-九一八事变.md — 填充5节/frontmatter5字段
+[OK] 19民国\01 时间线\1941年-皖南事变与太平洋战争.md — 填充3节/frontmatter0字段
+[OK] 19民国\01 时间线\1947年-刘邓大军挺进大别山.md — 填充4节/frontmatter0字段
+[OK] 19民国\01 时间线\1938年-武汉会战与抗战进入相持阶段.md — 填充4节/frontmatter0字段
+[OK] 19民国\01 时间线\1949年-渡江战役与中华人民共和国成立.md — 填充5节/frontmatter0字段
+[OK] 19民国\01 时间线\1934年-中央红军长征.md — 填充5节/frontmatter0字段
+[OK] 19民国\01 时间线\1944年-豫湘桂会战.md — 填充4节/frontmatter0字段
+[OK] 19民国\01 时间线\1945年-抗日战争胜利.md — 填充5节/frontmatter0字段
+[OK] 19民国\01 时间线\1946年-全面内战爆发.md — 填充5节/frontmatter0字段
+[OK] 19民国\02 人物图谱\伊藤博文.md — 填充8节/frontmatter0字段
+[OK] 19民国\02 人物图谱\乃木希典.md — 填充12节/frontmatter0字段
+[OK] 19民国\02 人物图谱\东乡平八郎.md — 填充3节/frontmatter0字段；丢弃AI无关小节['### 上级 / 下级']
+[OK] 19民国\02 人物图谱\冈村宁次.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\冯玉祥.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\佟麟阁.md — 填充6节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\何香凝.md — AI 未产出可填入内容
+[OK] 19民国\02 人物图谱\唐廷枢.md — 填充12节/frontmatter0字段
+[OK] 19民国\01 时间线\1910年-国会请愿运动.md — 填充4节/frontmatter0字段
+[OK] 19民国\02 人物图谱\刘坤一.md — 填充12节/frontmatter0字段
+[OK] 19民国\02 人物图谱\丁汝昌.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\刘伯承.md — 填充6节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\周恩来.md — AI 未产出可填入内容
+[SKIP] 19民国\02 人物图谱\土肥原贤二.md — AI 未产出可填入内容
+[OK] 19民国\02 人物图谱\卢永祥.md — 填充12节/frontmatter0字段
+[ERR] 19民国\02 人物图谱\唐景崧.md — AIError: HTTP 400：{"contentFilter":[{"level":1,"role":"user"}],"error":{"code":"1301","message":"系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。"}}
+[SKIP] 19民国\02 人物图谱\宣统帝.md — AI 未产出可填入内容
+[OK] 19民国\02 人物图谱\宋子文.md — 填充6节/frontmatter0字段；丢弃AI无关小节['### 早期经历', '### 第三阶段', '### 相关时间线']
+[OK] 19民国\02 人物图谱\叶挺.md — 填充12节/frontmatter0字段
+[OK] 19民国\02 人物图谱\唐继尧.md — 填充6节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\山县有朋.md — AI 未产出可填入内容
+[OK] 19民国\02 人物图谱\宋教仁.md — 填充12节/frontmatter4字段；丢弃AI无关小节['### [[相关时间线]]', '### 参考资料']
+[OK] 19民国\02 人物图谱\岑春煊.md — 填充8节/frontmatter0字段
+[OK] 19民国\01 时间线\1936年-西安事变.md — 填充4节/frontmatter0字段
+[OK] 19民国\02 人物图谱\张学良.md — 填充12节/frontmatter0字段
+[OK] 19民国\02 人物图谱\孔祥熙.md — 填充6节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\张宗昌.md — AI 未产出可填入内容
+[OK] 19民国\02 人物图谱\庆亲王奕劻.md — 填充12节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\李宗仁.md — AI 未产出可填入内容
+[OK] 19民国\02 人物图谱\曾国藩.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\昭和天皇.md — 填充13节/frontmatter4字段
+[SKIP] 19民国\02 人物图谱\杨虎城.md — AI 未产出可填入内容
+[OK] 19民国\02 人物图谱\杨尚昆.md — 填充12节/frontmatter0字段
+[OK] 19民国\02 人物图谱\李莲英.md — 填充9节/frontmatter0字段
+[OK] 19民国\02 人物图谱\广田弘毅.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\廖仲恺.md — 填充12节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\汪精卫.md — AI 未产出可填入内容
+[OK] 19民国\02 人物图谱\梅津美治郎.md — 填充12节/frontmatter0字段
+[OK] 19民国\02 人物图谱\段祺瑞.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\杜聿明.md — 填充12节/frontmatter0字段
+[OK] 19民国\02 人物图谱\王尽美.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\章太炎.md — 填充12节/frontmatter0字段；丢弃AI无关小节['### [[相关时间线]]']
+[OK] 19民国\02 人物图谱\王占元.md — 填充6节/frontmatter0字段
+[ERR] 19民国\02 人物图谱\任弼时.md — AIError: HTTP 400：{"contentFilter":[{"level":1,"role":"assistant"}],"error":{"code":"1301","message":"系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。"}}
+[OK] 19民国\02 人物图谱\端方.md — 填充12节/frontmatter4字段；丢弃AI无关小节['### [[相关时间线]]', '### 参考资料']
+[SKIP] 19民国\02 人物图谱\博古.md — AI 未产出可填入内容
+[OK] 19民国\02 人物图谱\光绪帝.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\罗斯福.md — 填充5节/frontmatter0字段；丢弃AI无关小节['## 四、关键历史节点']
+[OK] 19民国\02 人物图谱\段芝贵.md — 填充12节/frontmatter0字段；丢弃AI无关小节['### [[相关时间线]]', '### 参考资料']
+[OK] 19民国\02 人物图谱\盛宣怀.md — 填充5节/frontmatter0字段
+[OK] 19民国\02 人物图谱\蔡元培.md — 填充12节/frontmatter0字段
+[OK] 19民国\02 人物图谱\荣禄.md — 填充12节/frontmatter0字段
+[OK] 19民国\02 人物图谱\胡适.md — 填充12节/frontmatter4字段；丢弃AI无关小节['### [[相关时间线]]', '### 参考资料']
+[OK] 19民国\02 人物图谱\胡林翼.md — 填充12节/frontmatter0字段
+[ERR] 19民国\02 人物图谱\林彪.md — AIError: HTTP 400：{"contentFilter":[{"level":1,"role":"assistant"}],"error":{"code":"1301","message":"系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。"}}
+[OK] 19民国\02 人物图谱\蔡锷.md — 填充12节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\松冈洋右.md — AI 未产出可填入内容
+[OK] 19民国\02 人物图谱\袁世凯.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\胡汉民.md — 填充12节/frontmatter0字段
+[OK] 19民国\02 人物图谱\粟裕.md — 填充12节/frontmatter4字段；丢弃AI无关小节['### 第三阶段', '### [[相关时间线]]', '### 家族 / 亲属']
+[OK] 19民国\02 人物图谱\谭嗣同.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\谭延闿.md — 填充12节/frontmatter0字段
+[OK] 19民国\02 人物图谱\邓世昌.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\阎锡山.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\白崇禧.md — 填充13节/frontmatter4字段
+[OK] 19民国\02 人物图谱\陈天华.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\谭震林.md — 填充8节/frontmatter0字段
+[OK] 19民国\02 人物图谱\赵登禹.md — 填充12节/frontmatter4字段；丢弃AI无关小节['### [[相关时间线]]']
+[OK] 19民国\02 人物图谱\陈济棠.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\邹容.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\陆奥宗光.md — 填充12节/frontmatter0字段
+[OK] 19民国\02 人物图谱\罗家伦.md — 填充12节/frontmatter4字段；丢弃AI无关小节['### 参考资料']
+[OK] 19民国\02 人物图谱\邓恩铭.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\陈潭秋.md — 填充12节/frontmatter0字段
+[OK] 19民国\02 人物图谱\顾祝同.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\陈炯明.md — 填充6节/frontmatter0字段
+[OK] 19民国\03 派系图谱\中国共产党.md — 填充0节/frontmatter1字段；丢弃AI无关小节['### 历史背景', '### 形成过程']
+[OK] 19民国\03 派系图谱\东北抗联.md — 填充6节/frontmatter0字段
+[ERR] 19民国\02 人物图谱\王明.md — AIError: HTTP 400：{"contentFilter":[{"level":1,"role":"assistant"}],"error":{"code":"1301","message":"系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。"}}
+[SKIP] 19民国\02 人物图谱\陆荣廷.md — AI 未产出可填入内容
+[OK] 19民国\03 派系图谱\五四运动.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\马占山.md — 填充12节/frontmatter4字段；丢弃AI无关小节['### [[相关时间线]]', '### 参考资料']
+[OK] 19民国\02 人物图谱\黎元洪.md — 填充6节/frontmatter0字段
+[OK] 19民国\03 派系图谱\中国.md — 填充6节/frontmatter0字段
+[OK] 19民国\03 派系图谱\地方实力派.md — 填充0节/frontmatter1字段；丢弃AI无关小节['### 核心领导', '### [[岑春煊]]']
+[OK] 19民国\02 人物图谱\陈立夫.md — 填充6节/frontmatter0字段
+[OK] 19民国\03 派系图谱\军部.md — 填充6节/frontmatter0字段
+[OK] 19民国\03 派系图谱\北洋水师.md — 填充18节/frontmatter0字段
+[OK] 19民国\03 派系图谱\反袁力量.md — 填充18节/frontmatter5字段；丢弃AI无关小节['### 参考资料']
+[OK] 19民国\03 派系图谱\启蒙派.md — 填充18节/frontmatter0字段
+[OK] 19民国\03 派系图谱\奉系.md — 填充6节/frontmatter0字段
+[OK] 19民国\03 派系图谱\派系总览.md — 填充1节/frontmatter0字段
+[OK] 19民国\03 派系图谱\日本皇室.md — 填充18节/frontmatter1字段；丢弃AI无关小节['### 参考资料']
+[OK] 19民国\03 派系图谱\清廷.md — 填充3节/frontmatter0字段
+[OK] 19民国\03 派系图谱\国民党.md — 填充18节/frontmatter5字段
+[OK] 19民国\03 派系图谱\直系.md — 填充3节/frontmatter0字段
+[OK] 19民国\03 派系图谱\教育界.md — 填充2节/frontmatter0字段
+[OK] 19民国\03 派系图谱\清军.md — 填充6节/frontmatter0字段
+[OK] 19民国\03 派系图谱\日本政府.md — 填充18节/frontmatter5字段
+[OK] 19民国\02 人物图谱\詹天佑.md — 填充12节/frontmatter0字段
+[OK] 19民国\02 人物图谱\陈赓.md — 填充3节/frontmatter0字段
+[OK] 19民国\03 派系图谱\湘军.md — 填充18节/frontmatter0字段
+[SKIP] 19民国\03 派系图谱\自由主义知识界.md — AI 未产出可填入内容
+[SKIP] 19民国\04 军队与军事院校\保定陆军军官学校.md — 无空内容
+[SKIP] 19民国\04 军队与军事院校\各地讲武堂.md — 无空内容
+[OK] 19民国\02 人物图谱\杨靖宇.md — 填充12节/frontmatter0字段
+[OK] 19民国\03 派系图谱\维新派.md — 填充18节/frontmatter1字段
+[OK] 19民国\03 派系图谱\苏联.md — 填充2节/frontmatter1字段
+[OK] 19民国\03 派系图谱\知识界.md — 填充18节/frontmatter1字段
+[SKIP] 19民国\03 派系图谱\革命阵营.md — AI 未产出可填入内容
+[SKIP] 19民国\03 派系图谱\新文化知识界.md — AI 未产出可填入内容
+[OK] 19民国\03 派系图谱\美国.md — 填充2节/frontmatter0字段
+[OK] 19民国\02 人物图谱\薛岳.md — 填充12节/frontmatter0字段
+[ERR] 19民国\02 人物图谱\贺龙.md — AIError: HTTP 400：{"contentFilter":[{"level":1,"role":"assistant"}],"error":{"code":"1301","message":"系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。"}}
+[OK] 19民国\03 派系图谱\桂系.md — 填充0节/frontmatter1字段；丢弃AI无关小节['### 上级 / 母体']
+[OK] 19民国\03 派系图谱\粤军.md — 填充6节/frontmatter0字段
+[OK] 19民国\03 派系图谱\革命派.md — 填充6节/frontmatter1字段
+[OK] 19民国\03 派系图谱\国民革命.md — 填充1节/frontmatter0字段
+==== 完成：共163条，填充131，跳过26，标记0，错误6，用时371s（日志：补齐日志.txt，备份：_备份_历史补齐）====
+==== 批量补齐开始 G:\个人文件\徐国栋个人知识库\00-Inbox\历史 ====
+==== 完成：共0条，填充0，跳过0，标记0，错误0，用时0s（日志：补齐日志.txt，备份：_备份_历史补齐）====
+==== 批量补齐开始 G:\个人文件\徐国栋个人知识库\00-Inbox\历史 ====
+==== 完成：共0条，填充0，跳过0，标记0，错误0，用时0s（日志：补齐日志.txt，备份：_备份_历史补齐）====
+==== 批量补齐开始 G:\个人文件\徐国栋个人知识库\00-Inbox\历史 ====
+[SKIP] 19民国\01 时间线\1909年-各省咨议局成立.md — 无空内容
+[SKIP] 19民国\01 时间线\1888年-北洋水师成军.md — 无空内容
+[SKIP] 19民国\01 时间线\1898年-戊戌变法.md — 无空内容
+[SKIP] 19民国\01 时间线\1920年-直皖战争.md — 无空内容
+[SKIP] 19民国\01 时间线\1913年-宋教仁遇刺与二次革命.md — 无空内容
+[SKIP] 19民国\01 时间线\1891年-清廷洋务运动进入调整期.md — 无空内容
+[SKIP] 19民国\01 时间线\1889年-张之洞督粤与洋务格局变化.md — 无空内容
+[SKIP] 19民国\01 时间线\1897年-德国强占胶州湾.md — 无空内容
+[SKIP] 19民国\01 时间线\1912年-中华民国成立.md — 无空内容
+[SKIP] 19民国\01 时间线\1905年-中国同盟会成立.md — 无空内容
+[SKIP] 19民国\01 时间线\1910年-国会请愿运动.md — 无空内容
+[SKIP] 19民国\01 时间线\1894年-甲午战争.md — 无空内容
+[SKIP] 19民国\01 时间线\1926年-北伐战争.md — 无空内容
+[OK] 19民国\01 时间线\1923年-曹锟贿选.md — 填充5节/frontmatter0字段
+[OK] 19民国\01 时间线\1892年-袁世凯继续经营朝鲜.md — 填充5节/frontmatter0字段
+[OK] 19民国\01 时间线\1919年-五四运动.md — 填充5节/frontmatter0字段
+[SKIP] 19民国\01 时间线\1934年-中央红军长征.md — 无空内容
+[SKIP] 19民国\01 时间线\1936年-西安事变.md — 无空内容
+[SKIP] 19民国\01 时间线\1938年-武汉会战与抗战进入相持阶段.md — 无空内容
+[SKIP] 19民国\01 时间线\1918年-第一次世界大战结束与北洋政局变化.md — AI 未产出可填入内容
+[SKIP] 19民国\01 时间线\1944年-豫湘桂会战.md — 无空内容
+[SKIP] 19民国\01 时间线\1945年-抗日战争胜利.md — 无空内容
+[SKIP] 19民国\01 时间线\1946年-全面内战爆发.md — 无空内容
+[OK] 19民国\01 时间线\1914年-袁氏约法.md — 填充5节/frontmatter0字段
+[SKIP] 19民国\01 时间线\1949年-渡江战役与中华人民共和国成立.md — 无空内容
+[SKIP] 19民国\02 人物图谱\丁汝昌.md — 无空内容
+[ERR] 19民国\01 时间线\1916年-护国战争与袁世凯病逝.md — AIError: HTTP 400：{"contentFilter":[{"level":1,"role":"user"}],"error":{"code":"1301","message":"系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。"}}
+[SKIP] 19民国\02 人物图谱\乃木希典.md — 无空内容
+[OK] 19民国\01 时间线\1922年-第一次直奉战争.md — 填充5节/frontmatter0字段
+[OK] 19民国\01 时间线\1921年-中国共产党成立.md — 填充5节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\佟麟阁.md — 无空内容
+[SKIP] 19民国\02 人物图谱\光绪帝.md — 无空内容
+[SKIP] 19民国\02 人物图谱\冈村宁次.md — 无空内容
+[SKIP] 19民国\02 人物图谱\冯玉祥.md — 无空内容
+[SKIP] 19民国\02 人物图谱\刘伯承.md — 无空内容
+[SKIP] 19民国\02 人物图谱\刘坤一.md — 无空内容
+[SKIP] 19民国\02 人物图谱\卢永祥.md — 无空内容
+[SKIP] 19民国\02 人物图谱\叶挺.md — 无空内容
+[SKIP] 19民国\02 人物图谱\唐廷枢.md — 无空内容
+[OK] 19民国\01 时间线\1904年-日俄战争.md — 填充1节/frontmatter0字段；丢弃AI无关小节['### 国际背景', '### 结果', '### 核心人物']
+[SKIP] 19民国\02 人物图谱\唐继尧.md — 无空内容
+[SKIP] 19民国\02 人物图谱\孔祥熙.md — 无空内容
+[OK] 19民国\01 时间线\1928年-东北易帜.md — 填充5节/frontmatter0字段
+[OK] 19民国\01 时间线\1931年-九一八事变.md — 填充5节/frontmatter0字段
+[OK] 19民国\01 时间线\1941年-皖南事变与太平洋战争.md — 填充1节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\广田弘毅.md — 无空内容
+[SKIP] 19民国\02 人物图谱\庆亲王奕劻.md — 无空内容
+[SKIP] 19民国\02 人物图谱\廖仲恺.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张学良.md — 无空内容
+[OK] 19民国\01 时间线\1915年-袁世凯称帝.md — 填充5节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\曾国藩.md — 无空内容
+[OK] 19民国\01 时间线\1927年-四一二政变与国共分裂.md — 填充5节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\杜聿明.md — 无空内容
+[SKIP] 19民国\02 人物图谱\杨尚昆.md — 无空内容
+[SKIP] 19民国\02 人物图谱\杨靖宇.md — 无空内容
+[OK] 19民国\02 人物图谱\伊藤博文.md — 填充4节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\梅津美治郎.md — 无空内容
+[OK] 19民国\02 人物图谱\宋子文.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\东乡平八郎.md — 填充9节/frontmatter0字段
+[OK] 19民国\02 人物图谱\岑春煊.md — 填充4节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\王尽美.md — 无空内容
+[OK] 19民国\02 人物图谱\李莲英.md — 填充3节/frontmatter0字段
+[ERR] 19民国\02 人物图谱\唐景崧.md — AIError: HTTP 400：{"contentFilter":[{"level":1,"role":"user"}],"error":{"code":"1301","message":"系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。"}}
+[OK] 19民国\02 人物图谱\昭和天皇.md — 填充7节/frontmatter0字段
+[OK] 19民国\01 时间线\1932年-一二八事变.md — 填充5节/frontmatter0字段
+[OK] 19民国\02 人物图谱\宋教仁.md — 填充7节/frontmatter0字段；丢弃AI无关小节['## 八、参与的重要历史事件', '## 十一、人物与时代']
+[OK] 19民国\02 人物图谱\盛宣怀.md — 填充1节/frontmatter0字段
+[OK] 19民国\02 人物图谱\章太炎.md — 填充8节/frontmatter0字段
+[OK] 19民国\01 时间线\1902年-清末新政启动.md — 填充5节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\胡林翼.md — 无空内容
+[SKIP] 19民国\02 人物图谱\胡汉民.md — 无空内容
+[OK] 19民国\02 人物图谱\段祺瑞.md — 填充6节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\荣禄.md — 无空内容
+[SKIP] 19民国\02 人物图谱\蔡元培.md — 无空内容
+[SKIP] 19民国\02 人物图谱\蔡锷.md — 无空内容
+[SKIP] 19民国\02 人物图谱\薛岳.md — 无空内容
+[SKIP] 19民国\02 人物图谱\袁世凯.md — 无空内容
+[SKIP] 19民国\02 人物图谱\詹天佑.md — 无空内容
+[SKIP] 19民国\02 人物图谱\谭嗣同.md — 无空内容
+[SKIP] 19民国\02 人物图谱\谭延闿.md — 无空内容
+[OK] 19民国\02 人物图谱\段芝贵.md — 填充8节/frontmatter0字段；丢弃AI无关小节['## 十一、人物与时代', '## 八、参与的重要历史事件']
+[SKIP] 19民国\02 人物图谱\罗斯福.md — AI 未产出可填入内容
+[OK] 19民国\02 人物图谱\谭震林.md — 填充4节/frontmatter0字段
+[OK] 19民国\02 人物图谱\粟裕.md — 填充8节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\邓恩铭.md — 无空内容
+[OK] 19民国\02 人物图谱\胡适.md — 填充8节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\端方.md — AI 未产出可填入内容
+[SKIP] 19民国\02 人物图谱\陆奥宗光.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈天华.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈济棠.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈潭秋.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈炯明.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈立夫.md — 无空内容
+[OK] 19民国\02 人物图谱\阎锡山.md — 填充5节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\赵登禹.md — AI 未产出可填入内容
+[OK] 19民国\01 时间线\1908年-光绪与慈禧相继去世.md — 填充5节/frontmatter0字段
+[ERR] 19民国\02 人物图谱\林彪.md — AIError: HTTP 400：{"contentFilter":[{"level":1,"role":"assistant"}],"error":{"code":"1301","message":"系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。"}}
+[SKIP] 19民国\03 派系图谱\东北抗联.md — 无空内容
+[SKIP] 19民国\03 派系图谱\中国.md — 无空内容
+[SKIP] 19民国\03 派系图谱\中国共产党.md — 无空内容
+[SKIP] 19民国\03 派系图谱\五四运动.md — 无空内容
+[SKIP] 19民国\03 派系图谱\军部.md — 无空内容
+[SKIP] 19民国\03 派系图谱\北洋水师.md — 无空内容
+[SKIP] 19民国\02 人物图谱\白崇禧.md — AI 未产出可填入内容
+[OK] 19民国\01 时间线\1947年-刘邓大军挺进大别山.md — 填充4节/frontmatter0字段
+[ERR] 19民国\02 人物图谱\贺龙.md — AIError: HTTP 400：{"contentFilter":[{"level":1,"role":"assistant"}],"error":{"code":"1301","message":"系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。"}}
+[SKIP] 19民国\02 人物图谱\马占山.md — AI 未产出可填入内容
+[SKIP] 19民国\03 派系图谱\地方实力派.md — 无空内容
+[SKIP] 19民国\03 派系图谱\奉系.md — 无空内容
+[OK] 19民国\03 派系图谱\启蒙派.md — 填充2节/frontmatter0字段
+[ERR] 19民国\02 人物图谱\任弼时.md — AIError: HTTP 400：{"contentFilter":[{"level":1,"role":"assistant"}],"error":{"code":"1301","message":"系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。"}}
+[OK] 19民国\03 派系图谱\国民党.md — 填充8节/frontmatter0字段
+[SKIP] 19民国\03 派系图谱\桂系.md — 无空内容
+[SKIP] 19民国\03 派系图谱\派系总览.md — 无空内容
+[SKIP] 19民国\03 派系图谱\清军.md — 无空内容
+[OK] 19民国\02 人物图谱\黎元洪.md — 填充6节/frontmatter0字段
+[OK] 19民国\03 派系图谱\国民革命.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\罗家伦.md — 填充8节/frontmatter0字段
+[OK] 19民国\02 人物图谱\顾祝同.md — 填充0节/frontmatter0字段；丢弃AI无关小节['### 早期经历', '### 第三阶段', '### 决策三']
+[SKIP] 19民国\03 派系图谱\粤军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\教育界.md — AI 未产出可填入内容
+[SKIP] 19民国\03 派系图谱\知识界.md — AI 未产出可填入内容
+[OK] 19民国\02 人物图谱\王占元.md — 填充6节/frontmatter0字段
+[SKIP] 19民国\03 派系图谱\革命派.md — 无空内容
+[OK] 19民国\02 人物图谱\邓世昌.md — 填充5节/frontmatter0字段
+[OK] 19民国\03 派系图谱\维新派.md — 填充3节/frontmatter0字段
+[OK] 19民国\03 派系图谱\苏联.md — 填充4节/frontmatter0字段
+[OK] 19民国\03 派系图谱\湘军.md — 填充8节/frontmatter0字段
+[ERR] 19民国\02 人物图谱\王明.md — AIError: HTTP 400：{"contentFilter":[{"level":1,"role":"assistant"}],"error":{"code":"1301","message":"系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。"}}
+[OK] 19民国\02 人物图谱\陈赓.md — 填充9节/frontmatter0字段
+[OK] 19民国\03 派系图谱\日本皇室.md — 填充3节/frontmatter1字段
+[ERR] 19民国\02 人物图谱\邹容.md — AIError: 模型未按 JSON 格式输出。可重试；若反复失败，请降低 max_tokens 或更换模型。
+[OK] 19民国\03 派系图谱\直系.md — 填充4节/frontmatter0字段
+[OK] 19民国\03 派系图谱\清廷.md — 填充3节/frontmatter0字段
+[ERR] 19民国\03 派系图谱\反袁力量.md — AIError: 模型未按 JSON 格式输出。可重试；若反复失败，请降低 max_tokens 或更换模型。
+[ERR] 19民国\03 派系图谱\日本政府.md — AIError: 模型未按 JSON 格式输出。可重试；若反复失败，请降低 max_tokens 或更换模型。
+[ERR] 19民国\03 派系图谱\美国.md — AIError: 模型未按 JSON 格式输出。可重试；若反复失败，请降低 max_tokens 或更换模型。
+==== 完成：共137条，填充46，跳过81，标记0，错误10，用时444s（日志：补齐日志.txt，备份：_备份_历史补齐）====
+==== 批量补齐开始 G:\个人文件\徐国栋个人知识库\00-Inbox\历史 ====
+[SKIP] 19民国\01 时间线\1941年-皖南事变与太平洋战争.md — 无空内容
+[SKIP] 19民国\01 时间线\1919年-五四运动.md — 无空内容
+[SKIP] 19民国\01 时间线\1892年-袁世凯继续经营朝鲜.md — 无空内容
+[SKIP] 19民国\01 时间线\1914年-袁氏约法.md — 无空内容
+[SKIP] 19民国\01 时间线\1915年-袁世凯称帝.md — 无空内容
+[SKIP] 19民国\01 时间线\1922年-第一次直奉战争.md — 无空内容
+[SKIP] 19民国\01 时间线\1921年-中国共产党成立.md — 无空内容
+[SKIP] 19民国\02 人物图谱\东乡平八郎.md — 无空内容
+[SKIP] 19民国\01 时间线\1908年-光绪与慈禧相继去世.md — 无空内容
+[SKIP] 19民国\01 时间线\1947年-刘邓大军挺进大别山.md — 无空内容
+[SKIP] 19民国\01 时间线\1928年-东北易帜.md — 无空内容
+[SKIP] 19民国\01 时间线\1932年-一二八事变.md — 无空内容
+[SKIP] 19民国\01 时间线\1904年-日俄战争.md — 无空内容
+[SKIP] 19民国\01 时间线\1931年-九一八事变.md — 无空内容
+[SKIP] 19民国\02 人物图谱\伊藤博文.md — 无空内容
+[SKIP] 19民国\02 人物图谱\岑春煊.md — 无空内容
+[SKIP] 19民国\02 人物图谱\宋子文.md — 无空内容
+[SKIP] 19民国\02 人物图谱\李莲英.md — 无空内容
+[SKIP] 19民国\02 人物图谱\昭和天皇.md — 无空内容
+[SKIP] 19民国\02 人物图谱\段芝贵.md — 无空内容
+[SKIP] 19民国\02 人物图谱\段祺瑞.md — 无空内容
+[SKIP] 19民国\02 人物图谱\王占元.md — 无空内容
+[SKIP] 19民国\02 人物图谱\盛宣怀.md — 无空内容
+[SKIP] 19民国\02 人物图谱\罗家伦.md — 无空内容
+[SKIP] 19民国\02 人物图谱\粟裕.md — 无空内容
+[SKIP] 19民国\02 人物图谱\谭震林.md — 无空内容
+[SKIP] 19民国\02 人物图谱\邓世昌.md — 无空内容
+[ERR] 19民国\02 人物图谱\宋教仁.md — PermissionError: [Errno 13] Permission denied: 'G:\\个人文件\\徐国栋个人知识库\\00-Inbox\\历史\\19民国\\02 人物图谱\\宋教仁.md'
+[ERR] 19民国\01 时间线\1902年-清末新政启动.md — PermissionError: [Errno 13] Permission denied: 'G:\\个人文件\\徐国栋个人知识库\\00-Inbox\\历史\\19民国\\01 时间线\\1902年-清末新政启动.md'
+[SKIP] 19民国\02 人物图谱\陈赓.md — 无空内容
+[ERR] 19民国\02 人物图谱\唐景崧.md — AIError: HTTP 400：{"contentFilter":[{"level":1,"role":"user"}],"error":{"code":"1301","message":"系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。"}}
+[SKIP] 19民国\02 人物图谱\黎元洪.md — 无空内容
+[ERR] 19民国\02 人物图谱\胡适.md — PermissionError: [Errno 13] Permission denied: 'G:\\个人文件\\徐国栋个人知识库\\00-Inbox\\历史\\19民国\\02 人物图谱\\胡适.md'
+[ERR] 19民国\01 时间线\1916年-护国战争与袁世凯病逝.md — AIError: HTTP 400：{"contentFilter":[{"level":1,"role":"user"}],"error":{"code":"1301","message":"系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。"}}
+[SKIP] 19民国\02 人物图谱\顾祝同.md — AI 未产出可填入内容
+[SKIP] 19民国\03 派系图谱\国民党.md — 无空内容
+[SKIP] 19民国\03 派系图谱\国民革命.md — 无空内容
+[ERR] 19民国\02 人物图谱\贺衷寒.md — PermissionError: [Errno 13] Permission denied: 'G:\\个人文件\\徐国栋个人知识库\\00-Inbox\\历史\\19民国\\02 人物图谱\\贺衷寒.md'
+[ERR] 19民国\02 人物图谱\王明.md — AIError: HTTP 400：{"contentFilter":[{"level":1,"role":"assistant"}],"error":{"code":"1301","message":"系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。"}}
+[ERR] 19民国\01 时间线\1927年-四一二政变与国共分裂.md — PermissionError: [Errno 13] Permission denied: 'G:\\个人文件\\徐国栋个人知识库\\00-Inbox\\历史\\19民国\\01 时间线\\1927年-四一二政变与国共分裂.md'
+[SKIP] 19民国\03 派系图谱\清廷.md — 无空内容
+[SKIP] 19民国\03 派系图谱\湘军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\直系.md — 无空内容
+[ERR] 19民国\02 人物图谱\林彪.md — AIError: HTTP 400：{"contentFilter":[{"level":1,"role":"assistant"}],"error":{"code":"1301","message":"系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。"}}
+[ERR] 19民国\02 人物图谱\贺龙.md — PermissionError: [Errno 13] Permission denied: 'G:\\个人文件\\徐国栋个人知识库\\00-Inbox\\历史\\19民国\\02 人物图谱\\贺龙.md'
+[SKIP] 19民国\03 派系图谱\苏联.md — 无空内容
+[ERR] 19民国\03 派系图谱\维新派.md — PermissionError: [Errno 13] Permission denied: 'G:\\个人文件\\徐国栋个人知识库\\00-Inbox\\历史\\19民国\\03 派系图谱\\维新派.md'
+[ERR] 19民国\03 派系图谱\启蒙派.md — PermissionError: [Errno 13] Permission denied: 'G:\\个人文件\\徐国栋个人知识库\\00-Inbox\\历史\\19民国\\03 派系图谱\\启蒙派.md'
+[SKIP] 19民国\02 人物图谱\阎锡山.md — AI 未产出可填入内容
+[ERR] 19民国\02 人物图谱\任弼时.md — AIError: HTTP 400：{"contentFilter":[{"level":1,"role":"assistant"}],"error":{"code":"1301","message":"系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。"}}
+[ERR] 19民国\02 人物图谱\邹容.md — PermissionError: [Errno 13] Permission denied: 'G:\\个人文件\\徐国栋个人知识库\\00-Inbox\\历史\\19民国\\02 人物图谱\\邹容.md'
+[ERR] 19民国\03 派系图谱\士官派.md — PermissionError: [Errno 13] Permission denied: 'G:\\个人文件\\徐国栋个人知识库\\00-Inbox\\历史\\19民国\\03 派系图谱\\士官派.md'
+[ERR] 19民国\03 派系图谱\保定系.md — PermissionError: [Errno 13] Permission denied: 'G:\\个人文件\\徐国栋个人知识库\\00-Inbox\\历史\\19民国\\03 派系图谱\\保定系.md'
+[ERR] 19民国\01 时间线\1923年-曹锟贿选.md — PermissionError: [Errno 13] Permission denied: 'G:\\个人文件\\徐国栋个人知识库\\00-Inbox\\历史\\19民国\\01 时间线\\1923年-曹锟贿选.md'
+[SKIP] 19民国\03 派系图谱\美国.md — AI 未产出可填入内容
+[ERR] 19民国\02 人物图谱\章太炎.md — AIError: 模型未按 JSON 格式输出。可重试；若反复失败，请降低 max_tokens 或更换模型。
+[ERR] 19民国\03 派系图谱\日本皇室.md — PermissionError: [Errno 13] Permission denied: 'G:\\个人文件\\徐国栋个人知识库\\00-Inbox\\历史\\19民国\\03 派系图谱\\日本皇室.md'
+[ERR] 19民国\03 派系图谱\反袁力量.md — AIError: 模型未按 JSON 格式输出。可重试；若反复失败，请降低 max_tokens 或更换模型。
+[ERR] 19民国\03 派系图谱\日本政府.md — AIError: 模型未按 JSON 格式输出。可重试；若反复失败，请降低 max_tokens 或更换模型。
+[ERR] 19民国\03 派系图谱\蓝衣社.md — AIError: HTTP 400：{"contentFilter":[{"level":1,"role":"assistant"}],"error":{"code":"1301","message":"系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。"}}
+==== 完成：共60条，填充0，跳过38，标记0，错误22，用时251s（日志：补齐日志.txt，备份：_备份_历史补齐）====
+==== 批量补齐开始 G:\个人文件\徐国栋个人知识库\00-Inbox\历史 ====
+[OK] 19民国\01 时间线\1927年-四一二政变与国共分裂.md — 填充1节/frontmatter0字段
+[OK] 19民国\02 人物图谱\宋教仁.md — 填充1节/frontmatter0字段
+[OK] 19民国\01 时间线\1902年-清末新政启动.md — 填充1节/frontmatter0字段
+[OK] 19民国\01 时间线\1923年-曹锟贿选.md — 填充5节/frontmatter0字段
+[OK] 19民国\02 人物图谱\章太炎.md — 填充7节/frontmatter0字段
+[OK] 19民国\02 人物图谱\唐景崧.md — 填充7节/frontmatter0字段
+[OK] 19民国\01 时间线\1916年-护国战争与袁世凯病逝.md — 填充4节/frontmatter0字段
+[OK] 19民国\02 人物图谱\王明.md — 填充3节/frontmatter4字段
+[OK] 19民国\02 人物图谱\胡适.md — 填充7节/frontmatter0字段
+[OK] 19民国\02 人物图谱\邹容.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\林彪.md — 填充8节/frontmatter4字段
+[OK] 19民国\03 派系图谱\反袁力量.md — 填充8节/frontmatter0字段
+[OK] 19民国\03 派系图谱\启蒙派.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\贺衷寒.md — 填充8节/frontmatter6字段
+[OK] 19民国\03 派系图谱\日本皇室.md — 填充5节/frontmatter1字段
+[OK] 19民国\02 人物图谱\贺龙.md — 填充8节/frontmatter4字段
+[OK] 19民国\03 派系图谱\维新派.md — 填充5节/frontmatter0字段
+[OK] 19民国\03 派系图谱\日本政府.md — 填充8节/frontmatter0字段
+[OK] 19民国\02 人物图谱\任弼时.md — 填充8节/frontmatter4字段
+[OK] 19民国\03 派系图谱\士官派.md — 填充12节/frontmatter6字段
+[OK] 19民国\03 派系图谱\保定系.md — 填充12节/frontmatter6字段
+[OK] 19民国\03 派系图谱\蓝衣社.md — 填充12节/frontmatter6字段
+==== 完成：共22条，填充22，跳过0，标记0，错误0，用时12s（日志：补齐日志.txt，备份：_备份_历史补齐）====
+==== 批量补齐开始 G:\个人文件\徐国栋个人知识库\00-Inbox\历史 ====
+[SKIP] 19民国\01 时间线\1896年-中日马关条约后的中国变局.md — 无空内容
+[SKIP] 19民国\01 时间线\1890年-湖广总督张之洞推动洋务.md — 无空内容
+[SKIP] 19民国\01 时间线\1889年-张之洞督粤与洋务格局变化.md — 无空内容
+[SKIP] 19民国\01 时间线\1881年-袁世凯投身淮军.md — 无空内容
+[SKIP] 19民国\01 时间线\1887年-台湾建省.md — 无空内容
+[SKIP] 19民国\01 时间线\1894年-甲午战争.md — 无空内容
+[SKIP] 19民国\01 时间线\1883年-中法战争前夜.md — 无空内容
+[SKIP] 19民国\01 时间线\1891年-清廷洋务运动进入调整期.md — 无空内容
+[SKIP] 19民国\01 时间线\1885年-中法战争与清廷加强台湾防务.md — 无空内容
+[SKIP] 19民国\01 时间线\1884年-甲申政变.md — 无空内容
+[SKIP] 19民国\01 时间线\1886年-北洋势力继续扩张.md — 无空内容
+[SKIP] 19民国\01 时间线\1892年-袁世凯继续经营朝鲜.md — 无空内容
+[SKIP] 19民国\00 首页\激荡风云70年-从晚清到台湾（1881–1949） 1.md — 无空内容
+[SKIP] 19民国\01 时间线\1888年-北洋水师成军.md — 无空内容
+[SKIP] 19民国\01 时间线\1893年-袁世凯升任温处道.md — 无空内容
+[SKIP] 19民国\01 时间线\1882年-壬午兵变.md — 无空内容
+[SKIP] 19民国\01 时间线\1895年-小站练兵.md — 无空内容
+[SKIP] 19民国\01 时间线\1898年-戊戌变法.md — 无空内容
+[SKIP] 19民国\01 时间线\1903年-清廷大规模编练新军.md — 无空内容
+[SKIP] 19民国\01 时间线\1904年-日俄战争.md — 无空内容
+[SKIP] 19民国\01 时间线\1906年-预备立宪.md — 无空内容
+[SKIP] 19民国\01 时间线\1897年-德国强占胶州湾.md — 无空内容
+[SKIP] 19民国\01 时间线\1900年-义和团与八国联军.md — 无空内容
+[SKIP] 19民国\01 时间线\1902年-清末新政启动.md — 无空内容
+[SKIP] 19民国\01 时间线\1905年-中国同盟会成立.md — 无空内容
+[SKIP] 19民国\01 时间线\1910年-国会请愿运动.md — 无空内容
+[SKIP] 19民国\01 时间线\1908年-光绪与慈禧相继去世.md — 无空内容
+[SKIP] 19民国\01 时间线\1913年-宋教仁遇刺与二次革命.md — 无空内容
+[SKIP] 19民国\01 时间线\1912年-中华民国成立.md — 无空内容
+[SKIP] 19民国\01 时间线\1916年-护国战争与袁世凯病逝.md — 无空内容
+[SKIP] 19民国\01 时间线\1917年-张勋复辟.md — 无空内容
+[SKIP] 19民国\01 时间线\1909年-各省咨议局成立.md — 无空内容
+[SKIP] 19民国\01 时间线\1920年-直皖战争.md — 无空内容
+[SKIP] 19民国\01 时间线\1919年-五四运动.md — 无空内容
+[SKIP] 19民国\01 时间线\1914年-袁氏约法.md — 无空内容
+[SKIP] 19民国\01 时间线\1921年-中国共产党成立.md — 无空内容
+[SKIP] 19民国\01 时间线\1923年-曹锟贿选.md — 无空内容
+[SKIP] 19民国\01 时间线\1915年-袁世凯称帝.md — 无空内容
+[SKIP] 19民国\01 时间线\1926年-北伐战争.md — 无空内容
+[SKIP] 19民国\01 时间线\1927年-四一二政变与国共分裂.md — 无空内容
+[SKIP] 19民国\01 时间线\1922年-第一次直奉战争.md — 无空内容
+[SKIP] 19民国\01 时间线\1928年-东北易帜.md — 无空内容
+[SKIP] 19民国\01 时间线\1929年-国民党内部派系冲突.md — 无空内容
+[SKIP] 19民国\01 时间线\1931年-九一八事变.md — 无空内容
+[SKIP] 19民国\01 时间线\1932年-一二八事变.md — 无空内容
+[SKIP] 19民国\01 时间线\1934年-中央红军长征.md — 无空内容
+[SKIP] 19民国\01 时间线\1935年-遵义会议.md — 无空内容
+[SKIP] 19民国\01 时间线\1936年-西安事变.md — 无空内容
+[OK] 19民国\01 时间线\1907年-袁世凯离开直隶.md — 填充4节/frontmatter0字段
+[SKIP] 19民国\01 时间线\1938年-武汉会战与抗战进入相持阶段.md — 无空内容
+[SKIP] 19民国\01 时间线\1939年-国共摩擦加剧.md — 无空内容
+[SKIP] 19民国\01 时间线\1940年-百团大战.md — 无空内容
+[SKIP] 19民国\01 时间线\1941年-皖南事变与太平洋战争.md — 无空内容
+[SKIP] 19民国\01 时间线\1942年-延安整风.md — 无空内容
+[OK] 19民国\01 时间线\1918年-第一次世界大战结束与北洋政局变化.md — 填充5节/frontmatter0字段
+[SKIP] 19民国\01 时间线\1944年-豫湘桂会战.md — 无空内容
+[SKIP] 19民国\01 时间线\1945年-抗日战争胜利.md — 无空内容
+[SKIP] 19民国\01 时间线\1946年-全面内战爆发.md — 无空内容
+[SKIP] 19民国\01 时间线\1947年-刘邓大军挺进大别山.md — 无空内容
+[SKIP] 19民国\01 时间线\1948年-三大战役.md — 无空内容
+[SKIP] 19民国\01 时间线\1949年-渡江战役与中华人民共和国成立.md — 无空内容
+[SKIP] 19民国\02 人物图谱\丁日昌.md — 无空内容
+[SKIP] 19民国\02 人物图谱\丁汝昌.md — 无空内容
+[SKIP] 19民国\02 人物图谱\丘吉尔.md — 无空内容
+[SKIP] 19民国\02 人物图谱\东乡平八郎.md — 无空内容
+[SKIP] 19民国\02 人物图谱\东条英机.md — 无空内容
+[SKIP] 19民国\02 人物图谱\严复.md — 无空内容
+[SKIP] 19民国\02 人物图谱\乃木希典.md — 无空内容
+[OK] 19民国\01 时间线\1930年-中原大战.md — 填充4节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\伊藤博文.md — 无空内容
+[SKIP] 19民国\02 人物图谱\何应钦.md — 无空内容
+[OK] 19民国\01 时间线\1901年-辛丑条约.md — 填充4节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\佟麟阁.md — 无空内容
+[SKIP] 19民国\02 人物图谱\傅作义.md — 无空内容
+[SKIP] 19民国\02 人物图谱\傅斯年.md — 无空内容
+[SKIP] 19民国\02 人物图谱\光绪帝.md — 无空内容
+[SKIP] 19民国\02 人物图谱\冈村宁次.md — 无空内容
+[SKIP] 19民国\02 人物图谱\冯国璋.md — 无空内容
+[SKIP] 19民国\02 人物图谱\冯玉祥.md — 无空内容
+[SKIP] 19民国\02 人物图谱\刘伯承.md — 无空内容
+[SKIP] 19民国\02 人物图谱\刘坤一.md — 无空内容
+[SKIP] 19民国\02 人物图谱\刘少奇.md — 无空内容
+[SKIP] 19民国\02 人物图谱\刘步蟾.md — 无空内容
+[SKIP] 19民国\02 人物图谱\刘铭传.md — 无空内容
+[SKIP] 19民国\02 人物图谱\华蘅芳.md — 无空内容
+[OK] 19民国\01 时间线\1925年-孙中山逝世与国民革命兴起.md — 填充4节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\卢永祥.md — 无空内容
+[SKIP] 19民国\02 人物图谱\卫立煌.md — 无空内容
+[SKIP] 19民国\02 人物图谱\叶挺.md — 无空内容
+[SKIP] 19民国\02 人物图谱\吴佩孚.md — 无空内容
+[SKIP] 19民国\02 人物图谱\周保中.md — 无空内容
+[OK] 19民国\01 时间线\1933年-塘沽协定.md — 填充5节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\唐廷枢.md — 无空内容
+[SKIP] 19民国\02 人物图谱\唐景崧.md — 无空内容
+[SKIP] 19民国\02 人物图谱\唐继尧.md — 无空内容
+[OK] 19民国\01 时间线\1911年-武昌起义.md — 填充4节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\孔祥熙.md — 无空内容
+[SKIP] 19民国\02 人物图谱\孙中山.md — 无空内容
+[SKIP] 19民国\02 人物图谱\孙立人.md — 无空内容
+[SKIP] 19民国\02 人物图谱\宋子文.md — 无空内容
+[SKIP] 19民国\02 人物图谱\宋庆龄.md — 无空内容
+[SKIP] 19民国\02 人物图谱\宋教仁.md — 无空内容
+[SKIP] 19民国\02 人物图谱\宋美龄.md — 无空内容
+[OK] 19民国\01 时间线\1937年-七七事变.md — 填充4节/frontmatter0字段
+[OK] 19民国\01 时间线\1943年-中共根据地发展与国民党统治危机.md — 填充0节/frontmatter1字段；丢弃AI无关小节['### 国际背景', '### 结果', '### 长期影响']
+[SKIP] 19民国\02 人物图谱\岑春煊.md — 无空内容
+[SKIP] 19民国\02 人物图谱\左宗棠.md — 无空内容
+[SKIP] 19民国\02 人物图谱\广田弘毅.md — 无空内容
+[SKIP] 19民国\02 人物图谱\庆亲王奕劻.md — 无空内容
+[SKIP] 19民国\02 人物图谱\康有为.md — 无空内容
+[SKIP] 19民国\02 人物图谱\廖仲恺.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张之洞.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张作霖.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张勋.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张国焘.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张学良.md — 无空内容
+[OK] 19民国\02 人物图谱\博古.md — 填充6节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\张群.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张自忠.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张闻天.md — 无空内容
+[SKIP] 19民国\02 人物图谱\彭德怀.md — 无空内容
+[SKIP] 19民国\02 人物图谱\徐世昌.md — 无空内容
+[SKIP] 19民国\02 人物图谱\徐向前.md — 无空内容
+[SKIP] 19民国\02 人物图谱\徐寿.md — 无空内容
+[SKIP] 19民国\02 人物图谱\徐锡麟.md — 无空内容
+[SKIP] 19民国\02 人物图谱\慈禧太后.md — 无空内容
+[SKIP] 19民国\02 人物图谱\戴季陶.md — 无空内容
+[SKIP] 19民国\02 人物图谱\戴笠.md — 无空内容
+[SKIP] 19民国\02 人物图谱\斯大林.md — 无空内容
+[SKIP] 19民国\02 人物图谱\明治天皇.md — 无空内容
+[SKIP] 19民国\02 人物图谱\昭和天皇.md — 无空内容
+[SKIP] 19民国\02 人物图谱\曹锟.md — 无空内容
+[SKIP] 19民国\02 人物图谱\曾国荃.md — 无空内容
+[SKIP] 19民国\02 人物图谱\曾国藩.md — 无空内容
+[SKIP] 19民国\02 人物图谱\本庄繁.md — 无空内容
+[OK] 19民国\01 时间线\1924年-第二次直奉战争与北京政变.md — 填充4节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\李大钊.md — 无空内容
+[OK] 19民国\02 人物图谱\周恩来.md — 填充6节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\李德.md — 无空内容
+[SKIP] 19民国\02 人物图谱\李福林.md — 无空内容
+[SKIP] 19民国\02 人物图谱\李莲英.md — 无空内容
+[SKIP] 19民国\02 人物图谱\李鸿章.md — 无空内容
+[SKIP] 19民国\02 人物图谱\杜聿明.md — 无空内容
+[SKIP] 19民国\02 人物图谱\杨尚昆.md — 无空内容
+[OK] 19民国\02 人物图谱\任弼时.md — 填充12节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\杨靖宇.md — 无空内容
+[OK] 19民国\02 人物图谱\土肥原贤二.md — 填充6节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\板垣征四郎.md — 无空内容
+[OK] 19民国\01 时间线\1899年-袁世凯出任山东巡抚.md — 填充4节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\林永升.md — 无空内容
+[SKIP] 19民国\02 人物图谱\梁启超.md — 无空内容
+[SKIP] 19民国\02 人物图谱\梅津美治郎.md — 无空内容
+[SKIP] 19民国\02 人物图谱\段祺瑞.md — 无空内容
+[SKIP] 19民国\02 人物图谱\段芝贵.md — 无空内容
+[SKIP] 19民国\02 人物图谱\毛泽东.md — 无空内容
+[OK] 19民国\02 人物图谱\山县有朋.md — 填充6节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\沈葆桢.md — 无空内容
+[SKIP] 19民国\02 人物图谱\王占元.md — 无空内容
+[SKIP] 19民国\02 人物图谱\王尽美.md — 无空内容
+[OK] 19民国\02 人物图谱\何香凝.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\李宗仁.md — 填充6节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\盛宣怀.md — 无空内容
+[SKIP] 19民国\02 人物图谱\瞿秋白.md — 无空内容
+[SKIP] 19民国\02 人物图谱\石原莞尔.md — 无空内容
+[SKIP] 19民国\02 人物图谱\秋瑾.md — 无空内容
+[SKIP] 19民国\02 人物图谱\章太炎.md — 无空内容
+[OK] 19民国\02 人物图谱\松冈洋右.md — 填充6节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\粟裕.md — 无空内容
+[SKIP] 19民国\02 人物图谱\罗家伦.md — 无空内容
+[OK] 19民国\02 人物图谱\宣统帝.md — 填充6节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\罗荣桓.md — 无空内容
+[SKIP] 19民国\02 人物图谱\聂荣臻.md — 无空内容
+[SKIP] 19民国\02 人物图谱\胡林翼.md — 无空内容
+[SKIP] 19民国\02 人物图谱\胡汉民.md — 无空内容
+[SKIP] 19民国\02 人物图谱\胡适.md — 无空内容
+[SKIP] 19民国\02 人物图谱\荣禄.md — 无空内容
+[SKIP] 19民国\02 人物图谱\董必武.md — 无空内容
+[SKIP] 19民国\02 人物图谱\蒋介石.md — 无空内容
+[SKIP] 19民国\02 人物图谱\蔡元培.md — 无空内容
+[SKIP] 19民国\02 人物图谱\蔡锷.md — 无空内容
+[SKIP] 19民国\02 人物图谱\薛岳.md — 无空内容
+[SKIP] 19民国\02 人物图谱\袁世凯.md — 无空内容
+[SKIP] 19民国\02 人物图谱\詹天佑.md — 无空内容
+[SKIP] 19民国\02 人物图谱\谭嗣同.md — 无空内容
+[SKIP] 19民国\02 人物图谱\谭延闿.md — 无空内容
+[SKIP] 19民国\02 人物图谱\谭震林.md — 无空内容
+[OK] 19民国\02 人物图谱\杨虎城.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\林彪.md — 填充12节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\赵尚志.md — 无空内容
+[OK] 19民国\02 人物图谱\罗斯福.md — 填充1节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\近卫文麿.md — 无空内容
+[SKIP] 19民国\02 人物图谱\邓世昌.md — 无空内容
+[SKIP] 19民国\02 人物图谱\邓小平.md — 无空内容
+[SKIP] 19民国\02 人物图谱\邓恩铭.md — 无空内容
+[SKIP] 19民国\02 人物图谱\邹容.md — 无空内容
+[SKIP] 19民国\02 人物图谱\醇亲王载沣.md — 无空内容
+[SKIP] 19民国\02 人物图谱\铁良.md — 无空内容
+[SKIP] 19民国\02 人物图谱\闻一多.md — 无空内容
+[OK] 19民国\02 人物图谱\王明.md — 填充9节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\阿南惟几.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陆奥宗光.md — 无空内容
+[OK] 19民国\02 人物图谱\汪精卫.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\白崇禧.md — 填充7节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\陈天华.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈果夫.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈毅.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈济棠.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈潭秋.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈炯明.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈独秀.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈立夫.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈赓.md — 无空内容
+[OK] 19民国\02 人物图谱\朱德.md — 填充8节/frontmatter4字段
+[OK] 19民国\02 人物图谱\赵登禹.md — 填充8节/frontmatter0字段
+[SKIP] 19民国\02 人物图谱\鲁迅.md — 无空内容
+[SKIP] 19民国\02 人物图谱\麦克阿瑟.md — 无空内容
+[SKIP] 19民国\02 人物图谱\黄兴.md — 无空内容
+[SKIP] 19民国\02 人物图谱\黎元洪.md — 无空内容
+[SKIP] 19民国\02 人物图谱\龙云.md — 无空内容
+[SKIP] 19民国\03 派系图谱\东北军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\东北抗联.md — 无空内容
+[SKIP] 19民国\03 派系图谱\中国.md — 无空内容
+[SKIP] 19民国\03 派系图谱\中国共产党.md — 无空内容
+[SKIP] 19民国\03 派系图谱\五四运动.md — 无空内容
+[OK] 19民国\02 人物图谱\贺衷寒.md — 填充12节/frontmatter0字段
+[SKIP] 19民国\03 派系图谱\军统.md — 无空内容
+[SKIP] 19民国\03 派系图谱\军部.md — 无空内容
+[SKIP] 19民国\03 派系图谱\北洋水师.md — 无空内容
+[SKIP] 19民国\03 派系图谱\北洋系.md — 无空内容
+[SKIP] 19民国\03 派系图谱\反袁力量.md — 无空内容
+[SKIP] 19民国\03 派系图谱\启蒙派.md — 无空内容
+[SKIP] 19民国\03 派系图谱\国民党.md — 无空内容
+[SKIP] 19民国\03 派系图谱\国民党军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\国民革命.md — 无空内容
+[SKIP] 19民国\03 派系图谱\地方实力派.md — 无空内容
+[SKIP] 19民国\03 派系图谱\地方督抚.md — 无空内容
+[OK] 19民国\02 人物图谱\阎锡山.md — 填充1节/frontmatter0字段
+[SKIP] 19民国\03 派系图谱\奉系.md — 无空内容
+[SKIP] 19民国\03 派系图谱\技术官僚.md — 无空内容
+[OK] 19民国\02 人物图谱\贺龙.md — 填充12节/frontmatter0字段
+[SKIP] 19民国\03 派系图谱\新四军.md — 无空内容
+[OK] 19民国\02 人物图谱\顾祝同.md — 填充5节/frontmatter0字段
+[SKIP] 19民国\03 派系图谱\日本军部.md — 无空内容
+[SKIP] 19民国\03 派系图谱\日本政府.md — 无空内容
+[SKIP] 19民国\03 派系图谱\日本海军.md — 无空内容
+[OK] 19民国\02 人物图谱\马占山.md — 填充8节/frontmatter0字段
+[SKIP] 19民国\03 派系图谱\日本陆军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\晋系.md — 无空内容
+[SKIP] 19民国\03 派系图谱\桂系.md — 无空内容
+[SKIP] 19民国\03 派系图谱\洋务派.md — 无空内容
+[SKIP] 19民国\03 派系图谱\派系总览.md — 无空内容
+[SKIP] 19民国\03 派系图谱\淮军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\清军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\清廷.md — 无空内容
+[SKIP] 19民国\03 派系图谱\湖北军政府.md — 无空内容
+[SKIP] 19民国\03 派系图谱\湘军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\滇系.md — 无空内容
+[SKIP] 19民国\03 派系图谱\皖系.md — 无空内容
+[SKIP] 19民国\03 派系图谱\直系.md — 无空内容
+[OK] 19民国\02 人物图谱\端方.md — 填充8节/frontmatter0字段
+[SKIP] 19民国\03 派系图谱\粤军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\粤系.md — 无空内容
+[SKIP] 19民国\03 派系图谱\维新派.md — 无空内容
+[OK] 19民国\02 人物图谱\陆荣廷.md — 填充6节/frontmatter0字段
+[OK] 19民国\03 派系图谱\教育界.md — 填充4节/frontmatter0字段
+[SKIP] 19民国\03 派系图谱\苏联.md — 无空内容
+[SKIP] 19民国\03 派系图谱\英国.md — 无空内容
+[OK] 19民国\03 派系图谱\新文化知识界.md — 填充7节/frontmatter1字段
+[SKIP] 19民国\03 派系图谱\西北军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\革命派.md — 无空内容
+[OK] 19民国\03 派系图谱\美国.md — 填充5节/frontmatter0字段
+[SKIP] 19民国\04 军队与军事院校\04军队与军事院校.md — 无空内容
+[SKIP] 19民国\04 军队与军事院校\保定陆军军官学校.md — 无空内容
+[SKIP] 19民国\04 军队与军事院校\各地讲武堂.md — 无空内容
+[SKIP] 19民国\03 派系图谱\知识界.md — AI 未产出可填入内容
+[OK] 19民国\03 派系图谱\保定系.md — 填充21节/frontmatter0字段
+[OK] 19民国\03 派系图谱\士官派.md — 填充21节/frontmatter0字段
+[SKIP] 19民国\03 派系图谱\日本皇室.md — AI 未产出可填入内容
+[OK] 19民国\02 人物图谱\陈其美.md — 填充8节/frontmatter4字段
+[OK] 19民国\03 派系图谱\革命阵营.md — 填充6节/frontmatter0字段
+[OK] 19民国\02 人物图谱\张宗昌.md — 填充6节/frontmatter0字段；丢弃AI无关小节['frontmatter']
+[SKIP] 19民国\03 派系图谱\自由主义知识界.md — AI 未产出可填入内容
+[OK] 19民国\03 派系图谱\蓝衣社.md — 填充21节/frontmatter0字段
+==== 完成：共283条，填充44，跳过239，标记0，错误0，用时15s（日志：补齐日志.txt，备份：_备份_历史补齐）====
+==== 批量补齐开始 G:\个人文件\徐国栋个人知识库\00-Inbox\历史 ====
+[SKIP] 19民国\01 时间线\1890年-湖广总督张之洞推动洋务.md — 无空内容
+[SKIP] 19民国\01 时间线\1900年-义和团与八国联军.md — 无空内容
+[SKIP] 19民国\01 时间线\1885年-中法战争与清廷加强台湾防务.md — 无空内容
+[SKIP] 19民国\01 时间线\1881年-袁世凯投身淮军.md — 无空内容
+[SKIP] 19民国\01 时间线\1894年-甲午战争.md — 无空内容
+[SKIP] 19民国\01 时间线\1898年-戊戌变法.md — 无空内容
+[SKIP] 19民国\01 时间线\1886年-北洋势力继续扩张.md — 无空内容
+[SKIP] 19民国\00 首页\激荡风云70年-从晚清到台湾（1881–1949） 1.md — 无空内容
+[SKIP] 19民国\01 时间线\1883年-中法战争前夜.md — 无空内容
+[SKIP] 19民国\01 时间线\1882年-壬午兵变.md — 无空内容
+[SKIP] 19民国\01 时间线\1884年-甲申政变.md — 无空内容
+[SKIP] 19民国\01 时间线\1888年-北洋水师成军.md — 无空内容
+[SKIP] 19民国\01 时间线\1887年-台湾建省.md — 无空内容
+[SKIP] 19民国\01 时间线\1895年-小站练兵.md — 无空内容
+[SKIP] 19民国\01 时间线\1899年-袁世凯出任山东巡抚.md — 无空内容
+[SKIP] 19民国\01 时间线\1892年-袁世凯继续经营朝鲜.md — 无空内容
+[SKIP] 19民国\01 时间线\1889年-张之洞督粤与洋务格局变化.md — 无空内容
+[SKIP] 19民国\01 时间线\1896年-中日马关条约后的中国变局.md — 无空内容
+[SKIP] 19民国\01 时间线\1891年-清廷洋务运动进入调整期.md — 无空内容
+[SKIP] 19民国\01 时间线\1893年-袁世凯升任温处道.md — 无空内容
+[SKIP] 19民国\01 时间线\1897年-德国强占胶州湾.md — 无空内容
+[SKIP] 19民国\01 时间线\1903年-清廷大规模编练新军.md — 无空内容
+[SKIP] 19民国\01 时间线\1901年-辛丑条约.md — 无空内容
+[SKIP] 19民国\01 时间线\1902年-清末新政启动.md — 无空内容
+[SKIP] 19民国\01 时间线\1904年-日俄战争.md — 无空内容
+[SKIP] 19民国\01 时间线\1905年-中国同盟会成立.md — 无空内容
+[SKIP] 19民国\01 时间线\1907年-袁世凯离开直隶.md — 无空内容
+[SKIP] 19民国\01 时间线\1912年-中华民国成立.md — 无空内容
+[SKIP] 19民国\01 时间线\1906年-预备立宪.md — 无空内容
+[SKIP] 19民国\01 时间线\1913年-宋教仁遇刺与二次革命.md — 无空内容
+[SKIP] 19民国\01 时间线\1908年-光绪与慈禧相继去世.md — 无空内容
+[SKIP] 19民国\01 时间线\1909年-各省咨议局成立.md — 无空内容
+[SKIP] 19民国\01 时间线\1910年-国会请愿运动.md — 无空内容
+[SKIP] 19民国\01 时间线\1911年-武昌起义.md — 无空内容
+[SKIP] 19民国\01 时间线\1920年-直皖战争.md — 无空内容
+[SKIP] 19民国\01 时间线\1916年-护国战争与袁世凯病逝.md — 无空内容
+[SKIP] 19民国\01 时间线\1918年-第一次世界大战结束与北洋政局变化.md — 无空内容
+[SKIP] 19民国\01 时间线\1922年-第一次直奉战争.md — 无空内容
+[SKIP] 19民国\01 时间线\1915年-袁世凯称帝.md — 无空内容
+[SKIP] 19民国\01 时间线\1919年-五四运动.md — 无空内容
+[SKIP] 19民国\01 时间线\1917年-张勋复辟.md — 无空内容
+[SKIP] 19民国\01 时间线\1914年-袁氏约法.md — 无空内容
+[SKIP] 19民国\01 时间线\1921年-中国共产党成立.md — 无空内容
+[SKIP] 19民国\01 时间线\1923年-曹锟贿选.md — 无空内容
+[SKIP] 19民国\01 时间线\1924年-第二次直奉战争与北京政变.md — 无空内容
+[SKIP] 19民国\01 时间线\1926年-北伐战争.md — 无空内容
+[SKIP] 19民国\01 时间线\1932年-一二八事变.md — 无空内容
+[SKIP] 19民国\01 时间线\1928年-东北易帜.md — 无空内容
+[SKIP] 19民国\01 时间线\1933年-塘沽协定.md — 无空内容
+[SKIP] 19民国\01 时间线\1927年-四一二政变与国共分裂.md — 无空内容
+[SKIP] 19民国\01 时间线\1929年-国民党内部派系冲突.md — 无空内容
+[SKIP] 19民国\01 时间线\1930年-中原大战.md — 无空内容
+[SKIP] 19民国\01 时间线\1938年-武汉会战与抗战进入相持阶段.md — 无空内容
+[SKIP] 19民国\01 时间线\1935年-遵义会议.md — 无空内容
+[SKIP] 19民国\01 时间线\1940年-百团大战.md — 无空内容
+[SKIP] 19民国\01 时间线\1931年-九一八事变.md — 无空内容
+[SKIP] 19民国\01 时间线\1939年-国共摩擦加剧.md — 无空内容
+[SKIP] 19民国\01 时间线\1943年-中共根据地发展与国民党统治危机.md — 无空内容
+[SKIP] 19民国\01 时间线\1945年-抗日战争胜利.md — 无空内容
+[SKIP] 19民国\01 时间线\1942年-延安整风.md — 无空内容
+[SKIP] 19民国\01 时间线\1949年-渡江战役与中华人民共和国成立.md — 无空内容
+[SKIP] 19民国\02 人物图谱\丁日昌.md — 无空内容
+[SKIP] 19民国\01 时间线\1947年-刘邓大军挺进大别山.md — 无空内容
+[SKIP] 19民国\01 时间线\1937年-七七事变.md — 无空内容
+[SKIP] 19民国\01 时间线\1925年-孙中山逝世与国民革命兴起.md — 无空内容
+[SKIP] 19民国\01 时间线\1941年-皖南事变与太平洋战争.md — 无空内容
+[SKIP] 19民国\01 时间线\1934年-中央红军长征.md — 无空内容
+[SKIP] 19民国\02 人物图谱\丁汝昌.md — 无空内容
+[SKIP] 19民国\01 时间线\1936年-西安事变.md — 无空内容
+[SKIP] 19民国\01 时间线\1944年-豫湘桂会战.md — 无空内容
+[SKIP] 19民国\02 人物图谱\丘吉尔.md — 无空内容
+[SKIP] 19民国\02 人物图谱\严复.md — 无空内容
+[SKIP] 19民国\02 人物图谱\东条英机.md — 无空内容
+[SKIP] 19民国\02 人物图谱\伊藤博文.md — 无空内容
+[SKIP] 19民国\01 时间线\1946年-全面内战爆发.md — 无空内容
+[SKIP] 19民国\01 时间线\1948年-三大战役.md — 无空内容
+[SKIP] 19民国\02 人物图谱\东乡平八郎.md — 无空内容
+[SKIP] 19民国\02 人物图谱\乃木希典.md — 无空内容
+[SKIP] 19民国\02 人物图谱\何香凝.md — 无空内容
+[SKIP] 19民国\02 人物图谱\何应钦.md — 无空内容
+[SKIP] 19民国\02 人物图谱\任弼时.md — 无空内容
+[SKIP] 19民国\02 人物图谱\冈村宁次.md — 无空内容
+[SKIP] 19民国\02 人物图谱\傅斯年.md — 无空内容
+[SKIP] 19民国\02 人物图谱\刘铭传.md — 无空内容
+[SKIP] 19民国\02 人物图谱\冯国璋.md — 无空内容
+[SKIP] 19民国\02 人物图谱\刘步蟾.md — 无空内容
+[SKIP] 19民国\02 人物图谱\刘伯承.md — 无空内容
+[SKIP] 19民国\02 人物图谱\华蘅芳.md — 无空内容
+[SKIP] 19民国\02 人物图谱\叶挺.md — 无空内容
+[SKIP] 19民国\02 人物图谱\冯玉祥.md — 无空内容
+[SKIP] 19民国\02 人物图谱\刘坤一.md — 无空内容
+[SKIP] 19民国\02 人物图谱\卫立煌.md — 无空内容
+[SKIP] 19民国\02 人物图谱\佟麟阁.md — 无空内容
+[SKIP] 19民国\02 人物图谱\光绪帝.md — 无空内容
+[SKIP] 19民国\02 人物图谱\傅作义.md — 无空内容
+[SKIP] 19民国\02 人物图谱\刘少奇.md — 无空内容
+[SKIP] 19民国\02 人物图谱\吴佩孚.md — 无空内容
+[SKIP] 19民国\02 人物图谱\博古.md — 无空内容
+[SKIP] 19民国\02 人物图谱\周恩来.md — 无空内容
+[SKIP] 19民国\02 人物图谱\唐继尧.md — 无空内容
+[SKIP] 19民国\02 人物图谱\唐廷枢.md — 无空内容
+[SKIP] 19民国\02 人物图谱\周保中.md — 无空内容
+[SKIP] 19民国\02 人物图谱\唐景崧.md — 无空内容
+[SKIP] 19民国\02 人物图谱\宣统帝.md — 无空内容
+[SKIP] 19民国\02 人物图谱\孔祥熙.md — 无空内容
+[SKIP] 19民国\02 人物图谱\宋子文.md — 无空内容
+[SKIP] 19民国\02 人物图谱\土肥原贤二.md — 无空内容
+[SKIP] 19民国\02 人物图谱\宋庆龄.md — 无空内容
+[SKIP] 19民国\02 人物图谱\庆亲王奕劻.md — 无空内容
+[SKIP] 19民国\02 人物图谱\康有为.md — 无空内容
+[SKIP] 19民国\02 人物图谱\廖仲恺.md — 无空内容
+[SKIP] 19民国\02 人物图谱\卢永祥.md — 无空内容
+[SKIP] 19民国\02 人物图谱\广田弘毅.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张作霖.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张之洞.md — 无空内容
+[SKIP] 19民国\02 人物图谱\宋美龄.md — 无空内容
+[SKIP] 19民国\02 人物图谱\山县有朋.md — 无空内容
+[SKIP] 19民国\02 人物图谱\孙中山.md — 无空内容
+[SKIP] 19民国\02 人物图谱\宋教仁.md — 无空内容
+[SKIP] 19民国\02 人物图谱\孙立人.md — 无空内容
+[SKIP] 19民国\02 人物图谱\岑春煊.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张国焘.md — 无空内容
+[SKIP] 19民国\02 人物图谱\左宗棠.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张闻天.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张宗昌.md — 无空内容
+[SKIP] 19民国\02 人物图谱\徐世昌.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张勋.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张自忠.md — 无空内容
+[SKIP] 19民国\02 人物图谱\徐向前.md — 无空内容
+[SKIP] 19民国\02 人物图谱\彭德怀.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张群.md — 无空内容
+[SKIP] 19民国\02 人物图谱\张学良.md — 无空内容
+[SKIP] 19民国\02 人物图谱\徐锡麟.md — 无空内容
+[SKIP] 19民国\02 人物图谱\斯大林.md — 无空内容
+[SKIP] 19民国\02 人物图谱\慈禧太后.md — 无空内容
+[SKIP] 19民国\02 人物图谱\徐寿.md — 无空内容
+[SKIP] 19民国\02 人物图谱\戴季陶.md — 无空内容
+[SKIP] 19民国\02 人物图谱\明治天皇.md — 无空内容
+[SKIP] 19民国\02 人物图谱\曹锟.md — 无空内容
+[SKIP] 19民国\02 人物图谱\戴笠.md — 无空内容
+[SKIP] 19民国\02 人物图谱\李莲英.md — 无空内容
+[SKIP] 19民国\02 人物图谱\曾国荃.md — 无空内容
+[SKIP] 19民国\02 人物图谱\本庄繁.md — 无空内容
+[SKIP] 19民国\02 人物图谱\李大钊.md — 无空内容
+[SKIP] 19民国\02 人物图谱\李福林.md — 无空内容
+[SKIP] 19民国\02 人物图谱\曾国藩.md — 无空内容
+[SKIP] 19民国\02 人物图谱\李宗仁.md — 无空内容
+[SKIP] 19民国\02 人物图谱\昭和天皇.md — 无空内容
+[SKIP] 19民国\02 人物图谱\杨尚昆.md — 无空内容
+[SKIP] 19民国\02 人物图谱\林彪.md — 无空内容
+[SKIP] 19民国\02 人物图谱\梁启超.md — 无空内容
+[SKIP] 19民国\02 人物图谱\杜聿明.md — 无空内容
+[SKIP] 19民国\02 人物图谱\李德.md — 无空内容
+[SKIP] 19民国\02 人物图谱\杨虎城.md — 无空内容
+[SKIP] 19民国\02 人物图谱\松冈洋右.md — 无空内容
+[SKIP] 19民国\02 人物图谱\杨靖宇.md — 无空内容
+[SKIP] 19民国\02 人物图谱\李鸿章.md — 无空内容
+[SKIP] 19民国\02 人物图谱\王占元.md — 无空内容
+[SKIP] 19民国\02 人物图谱\梅津美治郎.md — 无空内容
+[SKIP] 19民国\02 人物图谱\板垣征四郎.md — 无空内容
+[SKIP] 19民国\02 人物图谱\林永升.md — 无空内容
+[SKIP] 19民国\02 人物图谱\段芝贵.md — 无空内容
+[SKIP] 19民国\02 人物图谱\沈葆桢.md — 无空内容
+[SKIP] 19民国\02 人物图谱\毛泽东.md — 无空内容
+[SKIP] 19民国\02 人物图谱\汪精卫.md — 无空内容
+[SKIP] 19民国\02 人物图谱\段祺瑞.md — 无空内容
+[SKIP] 19民国\02 人物图谱\白崇禧.md — 无空内容
+[SKIP] 19民国\02 人物图谱\王尽美.md — 无空内容
+[SKIP] 19民国\02 人物图谱\瞿秋白.md — 无空内容
+[SKIP] 19民国\02 人物图谱\章太炎.md — 无空内容
+[SKIP] 19民国\02 人物图谱\罗斯福.md — 无空内容
+[SKIP] 19民国\02 人物图谱\罗家伦.md — 无空内容
+[SKIP] 19民国\02 人物图谱\胡林翼.md — 无空内容
+[SKIP] 19民国\02 人物图谱\石原莞尔.md — 无空内容
+[SKIP] 19民国\02 人物图谱\秋瑾.md — 无空内容
+[SKIP] 19民国\02 人物图谱\盛宣怀.md — 无空内容
+[SKIP] 19民国\02 人物图谱\粟裕.md — 无空内容
+[SKIP] 19民国\02 人物图谱\端方.md — 无空内容
+[SKIP] 19民国\02 人物图谱\聂荣臻.md — 无空内容
+[SKIP] 19民国\02 人物图谱\荣禄.md — 无空内容
+[SKIP] 19民国\02 人物图谱\罗荣桓.md — 无空内容
+[SKIP] 19民国\02 人物图谱\董必武.md — 无空内容
+[SKIP] 19民国\02 人物图谱\蔡元培.md — 无空内容
+[SKIP] 19民国\02 人物图谱\胡适.md — 无空内容
+[SKIP] 19民国\02 人物图谱\胡汉民.md — 无空内容
+[SKIP] 19民国\02 人物图谱\蒋介石.md — 无空内容
+[SKIP] 19民国\02 人物图谱\袁世凯.md — 无空内容
+[SKIP] 19民国\02 人物图谱\谭嗣同.md — 无空内容
+[SKIP] 19民国\02 人物图谱\詹天佑.md — 无空内容
+[SKIP] 19民国\02 人物图谱\薛岳.md — 无空内容
+[SKIP] 19民国\02 人物图谱\谭震林.md — 无空内容
+[SKIP] 19民国\02 人物图谱\谭延闿.md — 无空内容
+[SKIP] 19民国\02 人物图谱\蔡锷.md — 无空内容
+[SKIP] 19民国\02 人物图谱\贺衷寒.md — 无空内容
+[SKIP] 19民国\02 人物图谱\赵尚志.md — 无空内容
+[SKIP] 19民国\02 人物图谱\邓世昌.md — 无空内容
+[SKIP] 19民国\02 人物图谱\铁良.md — 无空内容
+[SKIP] 19民国\02 人物图谱\邓小平.md — 无空内容
+[SKIP] 19民国\02 人物图谱\近卫文麿.md — 无空内容
+[SKIP] 19民国\02 人物图谱\贺龙.md — 无空内容
+[SKIP] 19民国\02 人物图谱\邹容.md — 无空内容
+[SKIP] 19民国\02 人物图谱\邓恩铭.md — 无空内容
+[SKIP] 19民国\02 人物图谱\醇亲王载沣.md — 无空内容
+[SKIP] 19民国\02 人物图谱\阿南惟几.md — 无空内容
+[SKIP] 19民国\02 人物图谱\赵登禹.md — 无空内容
+[SKIP] 19民国\02 人物图谱\闻一多.md — 无空内容
+[SKIP] 19民国\02 人物图谱\阎锡山.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陆荣廷.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陆奥宗光.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈天华.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈毅.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈济棠.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈潭秋.md — 无空内容
+[SKIP] 19民国\02 人物图谱\顾祝同.md — 无空内容
+[SKIP] 19民国\02 人物图谱\鲁迅.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈果夫.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈立夫.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈炯明.md — 无空内容
+[SKIP] 19民国\02 人物图谱\黄兴.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈赓.md — 无空内容
+[SKIP] 19民国\02 人物图谱\马占山.md — 无空内容
+[SKIP] 19民国\02 人物图谱\陈独秀.md — 无空内容
+[SKIP] 19民国\02 人物图谱\黎元洪.md — 无空内容
+[SKIP] 19民国\02 人物图谱\麦克阿瑟.md — 无空内容
+[SKIP] 19民国\03 派系图谱\东北军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\东北抗联.md — 无空内容
+[SKIP] 19民国\02 人物图谱\龙云.md — 无空内容
+[SKIP] 19民国\03 派系图谱\中国.md — 无空内容
+[SKIP] 19民国\03 派系图谱\保定系.md — 无空内容
+[SKIP] 19民国\03 派系图谱\中国共产党.md — 无空内容
+[SKIP] 19民国\03 派系图谱\五四运动.md — 无空内容
+[SKIP] 19民国\03 派系图谱\北洋水师.md — 无空内容
+[SKIP] 19民国\03 派系图谱\北洋系.md — 无空内容
+[SKIP] 19民国\03 派系图谱\反袁力量.md — 无空内容
+[SKIP] 19民国\03 派系图谱\军统.md — 无空内容
+[SKIP] 19民国\03 派系图谱\启蒙派.md — 无空内容
+[SKIP] 19民国\03 派系图谱\国民党军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\国民党.md — 无空内容
+[SKIP] 19民国\03 派系图谱\军部.md — 无空内容
+[SKIP] 19民国\03 派系图谱\教育界.md — 无空内容
+[SKIP] 19民国\03 派系图谱\士官派.md — 无空内容
+[SKIP] 19民国\03 派系图谱\技术官僚.md — 无空内容
+[SKIP] 19民国\03 派系图谱\国民革命.md — 无空内容
+[SKIP] 19民国\03 派系图谱\日本政府.md — 无空内容
+[SKIP] 19民国\03 派系图谱\新四军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\奉系.md — 无空内容
+[SKIP] 19民国\03 派系图谱\地方督抚.md — 无空内容
+[SKIP] 19民国\03 派系图谱\地方实力派.md — 无空内容
+[SKIP] 19民国\03 派系图谱\日本军部.md — 无空内容
+[SKIP] 19民国\03 派系图谱\日本海军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\晋系.md — 无空内容
+[SKIP] 19民国\03 派系图谱\日本陆军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\派系总览.md — 无空内容
+[SKIP] 19民国\03 派系图谱\桂系.md — 无空内容
+[SKIP] 19民国\03 派系图谱\洋务派.md — 无空内容
+[SKIP] 19民国\03 派系图谱\湘军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\滇系.md — 无空内容
+[SKIP] 19民国\03 派系图谱\皖系.md — 无空内容
+[SKIP] 19民国\03 派系图谱\淮军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\清廷.md — 无空内容
+[SKIP] 19民国\03 派系图谱\湖北军政府.md — 无空内容
+[SKIP] 19民国\03 派系图谱\清军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\直系.md — 无空内容
+[SKIP] 19民国\03 派系图谱\粤系.md — 无空内容
+[SKIP] 19民国\03 派系图谱\维新派.md — 无空内容
+[SKIP] 19民国\03 派系图谱\美国.md — 无空内容
+[SKIP] 19民国\03 派系图谱\粤军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\蓝衣社.md — 无空内容
+[SKIP] 19民国\03 派系图谱\苏联.md — 无空内容
+[SKIP] 19民国\03 派系图谱\英国.md — 无空内容
+[SKIP] 19民国\03 派系图谱\西北军.md — 无空内容
+[SKIP] 19民国\03 派系图谱\革命派.md — 无空内容
+[SKIP] 19民国\04 军队与军事院校\保定陆军军官学校.md — 无空内容
+[SKIP] 19民国\04 军队与军事院校\各地讲武堂.md — 无空内容
+[SKIP] 19民国\03 派系图谱\革命阵营.md — 无空内容
+[SKIP] 19民国\04 军队与军事院校\04军队与军事院校.md — 无空内容
+[OK] 19民国\02 人物图谱\王明.md — 填充8节/frontmatter0字段
+[OK] 19民国\02 人物图谱\陈其美.md — 填充12节/frontmatter0字段
+[OK] 19民国\02 人物图谱\朱德.md — 填充12节/frontmatter0字段
+[SKIP] 19民国\03 派系图谱\日本皇室.md — AI 未产出可填入内容
+[SKIP] 19民国\03 派系图谱\知识界.md — AI 未产出可填入内容
+[SKIP] 19民国\03 派系图谱\自由主义知识界.md — AI 未产出可填入内容
+[SKIP] 19民国\03 派系图谱\新文化知识界.md — AI 未产出可填入内容
+==== 完成：共283条，填充3，跳过280，标记0，错误0，用时3s（日志：补齐日志.txt，备份：_备份_历史补齐）====

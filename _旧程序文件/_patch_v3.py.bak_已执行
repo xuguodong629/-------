@@ -1,0 +1,202 @@
+# -*- coding: utf-8 -*-
+"""类型判定 v3 补丁：国号/僧道/制度识别、地名层收紧、单字关键词后缀化、索引类跳过。"""
+import ast, pathlib, shutil
+
+p = pathlib.Path("core.py")
+shutil.copy2(p, pathlib.Path("_旧程序文件") / "core.py.bak_判定v3前")
+s = p.read_text(encoding="utf-8")
+orig = s
+n = 0
+
+
+def rep(old, new, count=1):
+    global s, n
+    assert old in s, "锚点未命中：" + old[:70]
+    s = s.replace(old, new, count)
+    n += 1
+
+
+# ── 1) 概念关键词规则：单字关键词只在**结尾**才算命中（后缀），多字仍然"包含" ──
+rep('''def match_type_in_kb(cfg: dict, name: str):''',
+    '''def _kw_hit(s: str, k: str) -> bool:
+    """关键词命中规则（era-neutral，收紧误判）：
+    * 多字关键词（≥2 字）→ 出现在名字**任意位置**都算命中；
+    * 单字关键词 → **只在该字是名字末尾时**才算命中（后缀），
+      否则「萧道成/道安/谢道韫」会被「道」判成地理、「法显」被「法」判成制度 ✗
+    """
+    k = str(k or "")
+    if not k:
+        return False
+    return s.endswith(k) if len(k) == 1 else (k in s)
+
+
+def _kw_hit_prefix(s: str, k: str) -> bool:
+    """兜底类关键词（单字姓）必须**以它开头**才算命中（姓氏是前缀）。"""
+    k = str(k or "")
+    if not k:
+        return False
+    return s.startswith(k) if len(k) == 1 else (k in s)
+
+
+# ── 国号 / 政权专名（era-neutral：只认通用国号字与常见政权名，不预设哪一朝）──
+STATE_SUFFIXES = ("夏", "商", "周", "秦", "汉", "晋", "宋", "齐", "梁", "陈", "魏", "燕",
+                  "赵", "凉", "蜀", "吴", "楚", "隋", "唐", "辽", "金", "元", "明", "清")
+STATE_NAMES = ("高句丽", "百济", "新罗", "柔然", "吐谷浑", "吐蕃", "高昌", "龟兹", "于阗",
+               "楼兰", "大理", "南诏", "西夏", "北元", "准噶尔", "回纥", "薛延陀", "突厥",
+               "代国", "乌孙", "疏勒", "焉耆", "党项", "契丹", "女真", "室韦", "靺鞨",
+               "渤海国", "谯蜀", "桓楚", "西蜀", "后蜀", "南唐", "北汉", "大月氏")
+GOV_TYPE_TOKENS = ("政权", "朝代", "王朝", "国别", "邦交", "国家")
+
+
+def _gov_types(routes) -> list:
+    """该库里属于"政权/朝代"类的类型名（没配就空 → 国号规则会诚实放弃）。"""
+    return sorted([t for t in routes if any(tok in t for tok in GOV_TYPE_TOKENS)], key=len)
+
+
+def _match_state(name: str) -> str:
+    """名字像不像国号/政权：命中常见政权专名，或以国号字结尾（限 2–6 字）。"""
+    s = str(name or "").strip()
+    if not (2 <= len(s) <= 6):
+        return ""
+    for p in STATE_NAMES:
+        if s == p or s.startswith(p) or s.endswith(p):
+            return p
+    if len(s) >= 2 and s[-1] in STATE_SUFFIXES:
+        return s[-1]
+    return ""
+
+
+# ── 僧道/宗教人物（era-neutral：常见首字 + 白名单；显式排除年号「道光」类）──
+MONK_PREFIXES = ("道", "法", "慧", "玄", "僧", "昙", "智", "鉴", "净", "竺", "支", "佛")
+MONK_NAMES = ("道安", "法显", "慧远", "玄奘", "鸠摩罗什", "僧肇", "慧能", "神秀", "鉴真",
+              "一行", "智顗", "道宣", "法琳", "昙鸾", "道绰", "善导", "弘忍", "竺法护",
+              "佛图澄", "支遁", "葛洪", "陶弘景", "寇谦之", "陆修静", "慧皎", "僧祐")
+ERA_NAME_GUARD = ("道光", "道咸")
+
+
+def _match_monk(name: str) -> str:
+    """僧道/宗教人物：白名单命中，或"首字是僧名常用字且 2–3 字"（排除年号）。"""
+    s = str(name or "").strip()
+    if s in ERA_NAME_GUARD:
+        return ""
+    for m in MONK_NAMES:
+        if s == m:
+            return m
+    if 2 <= len(s) <= 3 and s[0] in MONK_PREFIXES and s not in ERA_NAME_GUARD:
+        return s[0]
+    return ""
+
+
+# ── 索引/总览类**不是词条**：不该建骨架（与时期无关）──
+NON_ENTRY_PARTS = ("总索引", "索引", "大纲", "总览", "总时间线", "逐年时间线", "清单",
+                   "全表", "汇总表")
+
+
+def is_non_entry_title(name: str) -> bool:
+    """像"索引/大纲/总览/汇总"这类**导航件**：不是词条，建库/建骨架时应跳过并说明理由。"""
+    s = str(name or "").strip()
+    if not s:
+        return False
+    if is_skip_title(s):
+        return True
+    return any(k in s for k in NON_ENTRY_PARTS)
+
+
+def match_type_in_kb(cfg: dict, name: str):''')
+
+# ── 2) 概念打分：用 _kw_hit（单字只认同后缀）；兜底用 _kw_hit_prefix ──
+rep('''        hit_a = [k for k in s_words if k in s]
+        hit_b = [k for k in f_words if k in s]''',
+    '''        hit_a = [k for k in s_words if _kw_hit(s, k)]
+        hit_b = [k for k in f_words if _kw_hit_prefix(s, k)]''')
+rep('''            if any(k in s for k in kws) and any(tok in t for tok in tokens):
+                concept[t] = 10 + max(len(k) for k in kws if k in s)
+                break''',
+    '''            if any(_kw_hit(s, k) for k in kws) and any(tok in t for tok in tokens):
+                concept[t] = 10 + max(len(k) for k in kws if _kw_hit(s, k))
+                break''')
+
+# ── 3) 国号 / 僧道：插在"概念层"之前（早于 C，晚于强匹配 A） ──
+rep('''    custom = cfg.get("type_keywords") or {}
+    strong, concept, fallback = {}, {}, {}''',
+    '''    # ② 国号/政权专名（era-neutral）：`东晋/前燕/成汉/冉魏/刘宋/胡夏/高句丽…` → 该库"政权类"
+    govs = _gov_types(routes)
+    if govs:
+        st = _match_state(s)
+        if st:
+            return govs[0], 90, f"国号「{st}」 →「{govs[0]}」（90 分）"
+    custom = cfg.get("type_keywords") or {}
+    strong, concept, fallback = {}, {}, {}''')
+
+# 僧道规则：概念层打分之后、兜底层之前
+rep('''    best = _pick(strong) or _pick(concept) or _pick(fallback)
+    if not best:''',
+    '''    # ③ 僧道/宗教人物（era-neutral）：概念层没命中时，先于"地名/姓氏兜底"判定
+    if not (strong or concept):
+        monk = _match_monk(s)
+        persons0 = _person_types(routes)
+        if monk and (persons0 or fallback):
+            if len(persons0) == 1:
+                return persons0[0], 40, f"僧道名「{monk}…」 →「{persons0[0]}」（40 分）"
+            if len(persons0) > 1:
+                return "", 0, (f"「{s}」像僧道人物，但本库有多个「人物类」（{'、'.join(persons0)}），"
+                               "无法判断属于哪一个 → 请写成「类型:名称」（或指定目标目录）")
+    best = _pick(strong) or _pick(concept) or _pick(fallback)
+    if not best:''')
+
+# ── 4) 地名：白名单必须"整体/前缀/后缀"命中，不允许出现在名字中间 ──
+rep('''    for p in HISTORIC_PLACES:                       # 已按长度降序 → 长名优先
+        if p in s:
+            return p, f"「{p}」"''',
+    '''    for p in HISTORIC_PLACES:                       # 已按长度降序 → 长名优先
+        if s == p or s.startswith(p) or s.endswith(p):
+            return p, f"「{p}」"''')
+
+# ── 5) 闸门也用 _kw_hit（收紧后单字不再乱触发） ──
+rep('''        other_signal = any(any(k in s for k in kws)
+                           for cname, kws, _tk in KB_TYPE_CONCEPTS if cname != "地理")''',
+    '''        other_signal = any(any(_kw_hit(s, k) for k in kws)
+                           for cname, kws, _tk in KB_TYPE_CONCEPTS if cname != "地理")''')
+rep('''        concept_signal = any(any(k in s for k in kws) for _c, kws, _tk in KB_TYPE_CONCEPTS)''',
+    '''        concept_signal = any(any(_kw_hit(s, k) for k in kws) for _c, kws, _tk in KB_TYPE_CONCEPTS)''')
+
+# ── 6) 概念表补充：制度/政策词 + 政权更替词（多字，任意位置命中） ──
+rep('''    ("典章", ("律", "令", "法", "典", "刑", "诏", "制度", "官制", "职官", "爵", "税", "赋", "制"),''',
+    '''    ("典章", ("律", "令", "法", "典", "刑", "诏", "制度", "官制", "职官", "爵", "税", "赋", "制",
+              "土断", "占田", "荫客", "均田", "中正", "科举", "摊丁", "一条鞭", "户调", "租庸调",
+              "两税法", "更赋", "编户", "屯田", "俸禄"),''')
+rep('''    ("事变", ("之变", "政变", "兵变", "事变", "起义", "暴动", "之乱", "民变", "事件", "之役",
+              "大事"),''',
+    '''    ("事变", ("之变", "政变", "兵变", "事变", "起义", "暴动", "之乱", "民变", "事件", "之役",
+              "大事", "篡位", "篡", "禅代", "禅让", "废立", "更替"),''')
+
+# ── 7) 罕见过史姓氏扩充（era-neutral：只是一张姓氏表） ──
+rep('''COMMON_SURNAMES = tuple(sorted(
+    set(FU_SURNAME_LIST) | {c for c in SINGLE_SURNAMES if c},
+    key=len, reverse=True,
+))''',
+    '''# 罕见历史姓氏（苻/郗/麹/沮/秃…）：era-neutral，只补"姓氏"这一层，不预设时期
+RARE_HISTORICAL_SURNAMES = (
+    "苻", "郗", "麹", "麴", "沮", "秃", "乞", "赫", "慕", "宇", "独", "尉", "长", "呼",
+    "贺", "万", "达", "乙", "纥", "干", "窦", "裴", "庾", "温", "桓", "谢", "褚", "荀",
+    "贾", "谯", "庾", "郗", "隗", "麴", "綦", "毋", "毌", "邴", "郦", "逯", "蒯", "阚",
+)
+COMMON_SURNAMES = tuple(sorted(
+    set(FU_SURNAME_LIST) | {c for c in SINGLE_SURNAMES if c} | set(RARE_HISTORICAL_SURNAMES),
+    key=len, reverse=True,
+))''')
+
+# ── 8) 建骨架：索引/大纲类直接跳过（给出理由） ──
+rep('''    out["name"] = title
+    routes = cfg.get("routes") or {}''',
+    '''    out["name"] = title
+    if is_non_entry_title(title):                      # 索引/大纲/总览类：不是词条 ✗
+        out.update(ok=False, action="跳过（索引/总览类）",
+                   report=[f"「{title}」是索引/总览类，不是词条 → 不建骨架"
+                           f"（要建索引请到⑤页「重建索引/统计」）"])
+        return out
+    routes = cfg.get("routes") or {}''')
+
+p.write_text(s, encoding="utf-8")
+ast.parse(s)
+print(f"core.py 判定 v3 补丁已应用：{n} 处；语法 OK；{len(s)} 字符")
